@@ -30,12 +30,18 @@ class UpstreamSession(Protocol):
 SessionFactory = Callable[[UpstreamSpec], Awaitable[UpstreamSession]]
 
 
-async def _stdio_session_factory(spec: UpstreamSpec) -> UpstreamSession:
-    """Real transport. Imported lazily so tests never need the mcp package."""
-    from .stdio_session import StdioUpstreamSession
+async def _default_session_factory(spec: UpstreamSpec) -> UpstreamSession:
+    """Real transport, chosen by spec. Imported lazily so tests skip the mcp package."""
+    if spec.transport == "http":
+        from .http_session import HttpUpstreamSession
 
-    session = StdioUpstreamSession(spec)
-    await session.start()
+        session: UpstreamSession = HttpUpstreamSession(spec)
+    else:
+        from .stdio_session import StdioUpstreamSession
+
+        session = StdioUpstreamSession(spec)
+
+    await session.start()  # type: ignore[attr-defined]
     return session
 
 
@@ -46,7 +52,7 @@ class UpstreamPool:
         session_factory: SessionFactory | None = None,
     ) -> None:
         self._specs = list(specs)
-        self._factory = session_factory or _stdio_session_factory
+        self._factory = session_factory or _default_session_factory
         self._sessions: dict[str, UpstreamSession] = {}
         self._catalog: Catalog | None = None
         self._catalog_hash: str = ""

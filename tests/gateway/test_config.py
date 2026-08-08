@@ -63,6 +63,70 @@ def test_server_id_containing_the_namespace_separator_is_rejected(tmp_path):
         GatewayConfig.from_file(path)
 
 
+def test_http_upstream_is_parsed(tmp_path):
+    path = tmp_path / "gateway.json"
+    path.write_text(
+        json.dumps(
+            _payload(
+                upstreams=[
+                    {
+                        "server_id": "notion",
+                        "transport": "http",
+                        "url": "https://mcp.notion.com/mcp",
+                        "headers": {"Authorization": "Bearer x"},
+                    }
+                ]
+            )
+        )
+    )
+
+    config = GatewayConfig.from_file(path)
+    (upstream,) = config.upstreams
+
+    assert upstream.transport == "http"
+    assert upstream.url == "https://mcp.notion.com/mcp"
+    assert upstream.headers == {"Authorization": "Bearer x"}
+
+
+def test_upstreams_default_to_stdio(tmp_path):
+    path = tmp_path / "gateway.json"
+    path.write_text(json.dumps(_payload()))
+
+    (upstream,) = GatewayConfig.from_file(path).upstreams
+
+    assert upstream.transport == "stdio"
+
+
+def test_stdio_upstream_without_a_command_is_rejected(tmp_path):
+    path = tmp_path / "gateway.json"
+    path.write_text(json.dumps(_payload(upstreams=[{"server_id": "github"}])))
+
+    with pytest.raises(ValueError, match="command"):
+        GatewayConfig.from_file(path)
+
+
+def test_http_upstream_without_a_url_is_rejected(tmp_path):
+    path = tmp_path / "gateway.json"
+    path.write_text(
+        json.dumps(_payload(upstreams=[{"server_id": "notion", "transport": "http"}]))
+    )
+
+    with pytest.raises(ValueError, match="url"):
+        GatewayConfig.from_file(path)
+
+
+def test_unknown_transport_is_rejected(tmp_path):
+    path = tmp_path / "gateway.json"
+    path.write_text(
+        json.dumps(
+            _payload(upstreams=[{"server_id": "x", "transport": "carrier-pigeon"}])
+        )
+    )
+
+    with pytest.raises(ValueError, match="carrier-pigeon"):
+        GatewayConfig.from_file(path)
+
+
 def test_duplicate_server_ids_are_rejected(tmp_path):
     path = tmp_path / "gateway.json"
     path.write_text(

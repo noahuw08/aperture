@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 MODES = ("shadow", "live")
+TRANSPORTS = ("stdio", "http")
 
 # Separates server id from tool name in the name advertised to the client. Server ids
 # may not contain it, so a single split from the left always recovers the pair even
@@ -21,12 +22,22 @@ NAMESPACE_SEP = "__"
 
 @dataclass(frozen=True)
 class UpstreamSpec:
-    """How to start and talk to one upstream MCP server."""
+    """How to reach one upstream MCP server.
+
+    Two transports, because real installations use both — on this machine `playwright`
+    is a stdio subprocess while `github` and `notion` are hosted HTTP endpoints. A
+    stdio-only gateway would silently proxy a third of the catalog.
+    """
 
     server_id: str
-    command: str
+    transport: str = "stdio"
+    # stdio
+    command: str = ""
     args: tuple[str, ...] = ()
     env: dict[str, str] = field(default_factory=dict, hash=False, compare=True)
+    # http
+    url: str = ""
+    headers: dict[str, str] = field(default_factory=dict, hash=False, compare=True)
 
 
 @dataclass(frozen=True)
@@ -59,12 +70,27 @@ class GatewayConfig:
             if server_id in seen:
                 raise ValueError(f"duplicate server_id: {server_id!r}")
             seen.add(server_id)
+
+            transport = raw.get("transport", "stdio")
+            if transport not in TRANSPORTS:
+                raise ValueError(
+                    f"unknown transport {transport!r} for {server_id!r}; "
+                    f"expected one of {TRANSPORTS}"
+                )
+            if transport == "stdio" and not raw.get("command"):
+                raise ValueError(f"stdio upstream {server_id!r} needs a command")
+            if transport == "http" and not raw.get("url"):
+                raise ValueError(f"http upstream {server_id!r} needs a url")
+
             upstreams.append(
                 UpstreamSpec(
                     server_id=server_id,
-                    command=raw["command"],
+                    transport=transport,
+                    command=raw.get("command", ""),
                     args=tuple(raw.get("args", ())),
                     env=dict(raw.get("env", {})),
+                    url=raw.get("url", ""),
+                    headers=dict(raw.get("headers", {})),
                 )
             )
 
