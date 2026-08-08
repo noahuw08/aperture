@@ -12,7 +12,9 @@ inbound brief and is still the best statement of the background argument._
    Corrections spawn new entries rather than editing old ones, so the top of the file is
    the current position and lower entries may be superseded.
 4. [`plan.md`](plan.md) — build detail for Phases 0–7.
-5. The Notion doc — *🔌 Personalizing MCP Tool Exposure* — for the strategy argument.
+5. [`algorithm.md`](algorithm.md) — the ranker itself, stage by stage. Target design for
+   P5–P6; read it before touching anything in Stage 3 of the roadmap.
+6. The Notion doc — *🔌 Personalizing MCP Tool Exposure* — for the strategy argument.
    Sections `🎯 The problem`, `🗺️ Roadmap`, `🔬 Evaluation`, `🏗️ Architecture & flow`.
 
 ---

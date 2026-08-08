@@ -72,7 +72,8 @@ class UpstreamPool:
                         server_id=server_id,
                         name=raw.name,
                         description=raw.description or "",
-                        input_schema=dict(getattr(raw, "inputSchema", None) or {}),
+                        # mcp 2.x names this ``input_schema``; 1.x used ``inputSchema``.
+                        input_schema=dict(getattr(raw, "input_schema", None) or {}),
                     )
                 )
 

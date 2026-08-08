@@ -11,7 +11,7 @@ tokens = ["anthropic>=0.116"]
 # Phase 0 evaluation: ToolRet loading + the bi-encoder that makes baseline 4 honest.
 bench = ["datasets>=2.14", "sentence-transformers>=3.0"]
 # Phase 2 data plane: the MCP protocol itself, client and server side.
-gateway = ["mcp>=1.2", "anyio>=4.0"]
+gateway = ["mcp>=2.0", "anyio>=4.0"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
 
 [build-system]

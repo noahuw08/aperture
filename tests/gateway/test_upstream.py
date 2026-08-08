@@ -8,7 +8,7 @@ class FakeTool:
     def __init__(self, name, description, schema):
         self.name = name
         self.description = description
-        self.inputSchema = schema
+        self.input_schema = schema
 
 
 class FakeSession:
