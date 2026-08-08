@@ -4,8 +4,9 @@ Assumes the OSS-repo path. The ordering is deliberately not "build the proxy fir
 phases up front can cheaply kill the thesis, and they cost ~3–4 weeks against months of
 gateway work.
 
-See [`decisions.md`](decisions.md) for why each of these choices was made, and
-[`handoff.md`](handoff.md) for the background argument.
+See [`decisions.md`](decisions.md) for why each of these choices was made,
+[`algorithm.md`](algorithm.md) for the ranker's full stage-by-stage design (Phases 5–6),
+and [`handoff.md`](handoff.md) for the background argument.
 
 ## Shape
 
