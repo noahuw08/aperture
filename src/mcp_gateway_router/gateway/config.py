@@ -8,11 +8,34 @@ confound.
 from __future__ import annotations
 
 import json
+import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 MODES = ("shadow", "live")
 TRANSPORTS = ("stdio", "http")
+
+_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _expand(value: str, where: str) -> str:
+    """Substitute ``${VAR}`` from the environment.
+
+    Raises rather than leaving the placeholder in place. A config file is committed to
+    the repo, so secrets have to come from the environment — and a header that silently
+    ships the literal string ``Bearer ${TOKEN}`` fails as a confusing 401 much later
+    instead of at load.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        resolved = os.environ.get(name)
+        if resolved is None:
+            raise ValueError(f"{where} references ${{{name}}}, which is not set")
+        return resolved
+
+    return _PLACEHOLDER.sub(replace, value)
 
 # Separates server id from tool name in the name advertised to the client. Server ids
 # may not contain it, so a single split from the left always recovers the pair even
@@ -82,15 +105,22 @@ class GatewayConfig:
             if transport == "http" and not raw.get("url"):
                 raise ValueError(f"http upstream {server_id!r} needs a url")
 
+            where = f"upstream {server_id!r}"
             upstreams.append(
                 UpstreamSpec(
                     server_id=server_id,
                     transport=transport,
                     command=raw.get("command", ""),
                     args=tuple(raw.get("args", ())),
-                    env=dict(raw.get("env", {})),
-                    url=raw.get("url", ""),
-                    headers=dict(raw.get("headers", {})),
+                    env={
+                        k: _expand(v, f"{where} env {k!r}")
+                        for k, v in raw.get("env", {}).items()
+                    },
+                    url=_expand(raw.get("url", ""), f"{where} url"),
+                    headers={
+                        k: _expand(v, f"{where} header {k!r}")
+                        for k, v in raw.get("headers", {}).items()
+                    },
                 )
             )
 

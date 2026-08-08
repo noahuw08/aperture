@@ -1,0 +1,27 @@
+{
+  "mode": "shadow",
+  "arm": "passthrough",
+  "budget_tokens": 3000,
+  "log_path": "runs/exposure.jsonl",
+  "pinned": [],
+  "model": "claude-opus-5",
+  "upstreams": [
+    {
+      "server_id": "playwright",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest", "--browser", "chromium"]
+    },
+    {
+      "server_id": "github",
+      "transport": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {"Authorization": "Bearer ${GITHUB_MCP_TOKEN}"}
+    },
+    {
+      "server_id": "notion",
+      "transport": "http",
+      "url": "https://mcp.notion.com/mcp"
+    }
+  ]
+}

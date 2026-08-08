@@ -127,6 +127,73 @@ def test_unknown_transport_is_rejected(tmp_path):
         GatewayConfig.from_file(path)
 
 
+def test_env_placeholders_in_headers_are_expanded(tmp_path, monkeypatch):
+    monkeypatch.setenv("GW_TEST_TOKEN", "secret-value")
+    path = tmp_path / "gateway.json"
+    path.write_text(
+        json.dumps(
+            _payload(
+                upstreams=[
+                    {
+                        "server_id": "github",
+                        "transport": "http",
+                        "url": "https://example.test/mcp",
+                        "headers": {"Authorization": "Bearer ${GW_TEST_TOKEN}"},
+                    }
+                ]
+            )
+        )
+    )
+
+    (upstream,) = GatewayConfig.from_file(path).upstreams
+
+    assert upstream.headers == {"Authorization": "Bearer secret-value"}
+
+
+def test_a_missing_env_placeholder_is_loud_not_literal(tmp_path, monkeypatch):
+    monkeypatch.delenv("GW_ABSENT_TOKEN", raising=False)
+    path = tmp_path / "gateway.json"
+    path.write_text(
+        json.dumps(
+            _payload(
+                upstreams=[
+                    {
+                        "server_id": "github",
+                        "transport": "http",
+                        "url": "https://example.test/mcp",
+                        "headers": {"Authorization": "Bearer ${GW_ABSENT_TOKEN}"},
+                    }
+                ]
+            )
+        )
+    )
+
+    with pytest.raises(ValueError, match="GW_ABSENT_TOKEN"):
+        GatewayConfig.from_file(path)
+
+
+def test_env_placeholders_are_expanded_in_stdio_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("GW_TEST_TOKEN", "abc")
+    path = tmp_path / "gateway.json"
+    path.write_text(
+        json.dumps(
+            _payload(
+                upstreams=[
+                    {
+                        "server_id": "github",
+                        "command": "npx",
+                        "env": {"API_KEY": "${GW_TEST_TOKEN}"},
+                    }
+                ]
+            )
+        )
+    )
+
+    (upstream,) = GatewayConfig.from_file(path).upstreams
+
+    assert upstream.env == {"API_KEY": "abc"}
+
+
 def test_duplicate_server_ids_are_rejected(tmp_path):
     path = tmp_path / "gateway.json"
     path.write_text(
