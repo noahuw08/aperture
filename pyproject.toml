@@ -1,0 +1,20 @@
+[project]
+name = "mcp-gateway-router"
+version = "0.1.0"
+description = "A personalizing proxy that selects which MCP tools to expose per request"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+# Real schema-token measurement. Optional so the quickstart needs no API key.
+tokens = ["anthropic>=0.116"]
+# Phase 0 evaluation: ToolRet loading + the bi-encoder that makes baseline 4 honest.
+bench = ["datasets>=2.14", "sentence-transformers>=3.0"]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_gateway_router"]

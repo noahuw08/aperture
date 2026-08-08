@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Roadmap — Phase 0 to GA</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --surface-1:#fcfcfb; --surface-2:#f0efec;
+    --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#78766f;
+    --grid:#e5e4e0;
+    --prove:#2a78d6; --instrument:#eb6834; --learn:#1baf7a;
+    --productize:#eda100; --sell:#e87ba4;
+    --gate:#4a3aa7; --fail:#e34948;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-1:#1a1a19; --surface-2:#262625;
+      --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#8f8e85;
+      --grid:#33332f;
+      --prove:#3987e5; --instrument:#d95926; --learn:#199e70;
+      --productize:#c98500; --sell:#d55181;
+      --gate:#9085e9; --fail:#e66767;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-1:#1a1a19; --surface-2:#262625;
+    --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#8f8e85;
+    --grid:#33332f;
+    --prove:#3987e5; --instrument:#d95926; --learn:#199e70;
+    --productize:#c98500; --sell:#d55181;
+    --gate:#9085e9; --fail:#e66767;
+  }
+  body { margin:0; background:var(--surface-1); }
+  .viz-root {
+    font:14px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+    background:var(--surface-1); color:var(--text-primary);
+    padding:32px; max-width:1180px; margin:0 auto;
+  }
+  h1 { font-size:20px; margin:0 0 4px; letter-spacing:-0.01em; }
+  .sub { color:var(--text-secondary); margin:0 0 18px; font-size:13px; }
+  .controls { display:flex; gap:8px; margin-bottom:16px; }
+  button {
+    font:inherit; font-size:12px; padding:5px 11px; border-radius:6px;
+    border:1px solid var(--grid); background:var(--surface-1);
+    color:var(--text-secondary); cursor:pointer;
+  }
+  button:hover { color:var(--text-primary); }
+  .legend { display:flex; flex-wrap:wrap; gap:18px; margin:18px 0 24px; font-size:12.5px; }
+  .legend span { display:flex; align-items:center; gap:7px; color:var(--text-secondary); }
+  .key { width:14px; height:14px; border-radius:3px; flex:none; border:2px solid; }
+  .chart { background:var(--surface-2); border-radius:10px; padding:20px 12px; overflow-x:auto; }
+  .note {
+    border-left:3px solid var(--fail); background:var(--surface-2);
+    padding:12px 16px; margin:22px 0 0; font-size:13px; color:var(--text-secondary);
+    border-radius:0 5px 5px 0;
+  }
+  .note strong { color:var(--text-primary); }
+  .note ul { margin:8px 0 0; padding-left:18px; }
+  .note li { margin:5px 0; }
+</style></head>
+<body><div class="viz-root">
+  <h1>Roadmap — Phase 0 to a sellable product</h1>
+  <p class="sub">Every phase has an exit gate. Dashed red edges are what happens when a gate <em>fails</em> —
+     a roadmap without those isn't a decision, it's a wish.</p>
+
+  <div class="controls"><button id="theme">Toggle dark mode</button></div>
+
+  <div class="legend">
+    <span><i class="key" style="border-color:var(--prove)"></i>Prove — can kill the project</span>
+    <span><i class="key" style="border-color:var(--instrument)"></i>Instrument — the choke point</span>
+    <span><i class="key" style="border-color:var(--learn)"></i>Learn — ranker and bandit</span>
+    <span><i class="key" style="border-color:var(--productize)"></i>Productize</span>
+    <span><i class="key" style="border-color:var(--sell)"></i>Sell</span>
+    <span><i class="key" style="border-color:var(--gate);border-radius:50%"></i>Gate</span>
+  </div>
+
+  <div class="chart"><pre class="mermaid" id="graph">
+flowchart TD
+  START([Scoping doc<br/>2026-08-04]) --> P0
+
+  subgraph PROVE["STAGE 1 · PROVE — 3-4 weeks, can reshape or kill the project"]
+    direction TB
+    P0["<b>P0 · Frontier harness</b><br/>Selector interface, 6 baselines,<br/>measured token cost, budget sweep"]
+    G0{"<b>GATE 0</b><br/>Does semantic retrieval<br/>already sit on the<br/>oracle frontier?"}
+    P1["<b>P1 · Multi-seat benchmark</b><br/>Personas over MCP-Bench,<br/>per-seat session histories"]
+    G1{"<b>GATE 1</b><br/>Does seat history beat<br/>identical selector<br/>without it?"}
+    P0 --> G0 --> P1 --> G1
+  end
+
+  G0 -.->|"retrieval wins<br/>given a prompt"| RESCOPE_C
+  G1 -.->|"delta ≈ 0"| PIVOT
+
+  RESCOPE_C["<b>RESCOPE TO POINT C</b><br/>Centre of gravity moves to find_tools.<br/>Personalization demoted to tiebreaker<br/>+ budget allocator. <i>Not</i> a kill."]:::warn
+  PIVOT["<b>PIVOT</b> · measurement only.<br/>Seat history adds nothing measurable.<br/>The logging is still worth selling."]:::fail
+
+  RESCOPE_C --> P2
+  PIVOT --> P2
+  G1 --> P2
+
+  subgraph INSTR["STAGE 2 · INSTRUMENT — the choke point, no model yet"]
+    direction TB
+    P2["<b>P2 · Gateway data plane</b><br/>MCP proxy, catalog service,<br/>find_tools, exposure log"]
+    P3["<b>P3 · Logging → insight</b><br/>Dead-weight report, miss demand,<br/>longitudinal guardrails"]
+    P8["<b>P8 · Design partner</b><br/>One vendor, real catalog,<br/>real traffic"]
+    G2{"<b>GATE 2</b><br/>Does a real vendor keep<br/>it running and act on<br/>the report?"}
+    P2 --> P3 --> P8 --> G2
+  end
+
+  G2 -.->|"nobody acts on it"| RESCOPE
+  RESCOPE["<b>RESCOPE</b> · the 'sellable alone'<br/>claim was wrong. Re-examine<br/>who the buyer is."]:::fail
+
+  G2 --> P4
+
+  subgraph LEARN["STAGE 3 · LEARN — needs P4's dataset, nothing before it"]
+    direction TB
+    P4["<b>P4 · Exploration floor</b><br/>22 fixed + 3 explore slots,<br/>propensity logged at session open"]
+    P5["<b>P5 · Ranker</b><br/>bi-encoder → LightGBM rerank →<br/>isotonic → knapsack + constraints"]
+    P6["<b>P6 · CB decision layer</b><br/>per-arm bandit over explore slots,<br/>IPS/SNIPS + DR, cold-start chain"]
+    G3{"<b>GATE 3</b><br/>Positive OPE lift, and<br/>does it <i>hold</i> over<br/>weeks?"}
+    P4 --> P5 --> P6 --> G3
+  end
+
+  G3 -.->|"lift decays"| RESCOPE
+
+  G3 --> P7
+
+  subgraph PROD["STAGE 4 · PRODUCTIZE — none of this is optional to sell"]
+    direction TB
+    P7["<b>P7 · Out-of-band context</b><br/>ContextProvider → tenant/seat<br/>features from vendor warehouse"]
+    P9["<b>P9 · Admin console</b><br/>Report UI, pin core, never-co-expose<br/>rules, override, <b>kill switch</b>"]
+    P10["<b>P10 · Hardening</b><br/><b>Fail-open</b>, multi-tenancy, SLA,<br/>security review, SOC 2 path"]
+    G4{"<b>GATE 4</b><br/>Can a gateway outage<br/>break a customer's<br/>agent?"}
+    P7 --> P9 --> P10 --> G4
+  end
+
+  G4 -.->|"yes — it can"| P10
+
+  G4 --> P11
+
+  subgraph SELL["STAGE 5 · SELL"]
+    direction TB
+    P11["<b>P11 · Packaging &amp; pricing</b><br/>OSS self-host vs hosted tiers,<br/>per-seat or per-call"]
+    P12["<b>P12 · GA</b><br/>Repeatable sale"]
+    G5{"<b>GATE 5</b><br/>Do customers 2 and 3<br/>close without<br/>founder heroics?"}
+    P11 --> P12 --> G5
+  end
+
+  G5 -.->|"no"| RESCOPE
+  G5 --> DONE([Mature product])
+
+  class P0,P1,G0,G1 prove
+  class P2,P3,P8,G2 instrument
+  class P4,P5,P6,G3 learn
+  class P7,P9,P10,G4 productize
+  class P11,P12,G5 sell
+
+  classDef prove stroke:#2a78d6,stroke-width:2px
+  classDef instrument stroke:#eb6834,stroke-width:2px
+  classDef learn stroke:#1baf7a,stroke-width:2px
+  classDef productize stroke:#eda100,stroke-width:2px
+  classDef sell stroke:#e87ba4,stroke-width:2px
+  classDef fail stroke:#e34948,stroke-width:2px,stroke-dasharray:5 4
+  classDef warn stroke:#eda100,stroke-width:2px,stroke-dasharray:5 4
+  </pre></div>
+
+  <div class="note">
+    <strong>Four requirements this exercise surfaced that were in no previous doc:</strong>
+    <ul>
+      <li><strong>Fail-open is a hard requirement, not a nicety.</strong> The gateway sits in the critical
+          path of every session. If it is down or slow, the client must still receive a working tool set —
+          the pinned core, served from cache. A proxy that can take a customer's agent down is unsellable
+          regardless of how good the ranking is.</li>
+      <li><strong>A kill switch belongs in the console.</strong> The vendor must be able to freeze the ranker
+          and revert to their own static set instantly, without our involvement. Nobody adopts a learned
+          system in their critical path without that lever.</li>
+      <li><strong>The design partner comes before the ranker (P8, not P11).</strong> The plan asserts P3 is
+          "sellable alone" — that claim is untested, and it is cheaper to falsify it with one real vendor
+          than to discover it after building P5 and P6.</li>
+      <li><strong>We see every tool call and its arguments.</strong> That is customer data flowing through us,
+          which makes compliance an early enterprise blocker rather than a late-stage checkbox.</li>
+    </ul>
+  </div>
+</div>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  const dark = () =>
+    document.documentElement.getAttribute('data-theme') === 'dark' ||
+    (!document.documentElement.getAttribute('data-theme') &&
+      matchMedia('(prefers-color-scheme: dark)').matches);
+  const src = document.getElementById('graph').textContent;
+
+  async function draw() {
+    const d = dark();
+    mermaid.initialize({
+      startOnLoad: false, securityLevel: 'strict',
+      theme: 'base',
+      themeVariables: {
+        background: d ? '#262625' : '#f0efec',
+        primaryColor: d ? '#1a1a19' : '#fcfcfb',
+        primaryTextColor: d ? '#ffffff' : '#0b0b0b',
+        primaryBorderColor: d ? '#33332f' : '#e5e4e0',
+        lineColor: d ? '#8f8e85' : '#78766f',
+        secondaryColor: d ? '#262625' : '#f0efec',
+        tertiaryColor: d ? '#1a1a19' : '#fcfcfb',
+        fontFamily: 'ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif',
+        fontSize: '13px',
+      },
+      flowchart: { curve: 'basis', nodeSpacing: 44, rankSpacing: 52, useMaxWidth: true },
+    });
+    const el = document.getElementById('graph');
+    el.removeAttribute('data-processed');
+    el.textContent = src;
+    await mermaid.run({ nodes: [el] });
+  }
+  draw();
+  document.getElementById('theme').onclick = async () => {
+    document.documentElement.setAttribute('data-theme', dark() ? 'light' : 'dark');
+    await draw();
+  };
+</script>
+</body></html>

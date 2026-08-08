@@ -1,0 +1,8 @@
+{
+  "ndcg@10": 0.2552,
+  "recall@10": 0.3416,
+  "hit@1": 0.1881,
+  "n_examples": 101,
+  "catalog_size": 37292,
+  "model": "mangopy/ToolRet-trained-e5-base-v2"
+}

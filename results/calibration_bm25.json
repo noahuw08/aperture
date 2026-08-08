@@ -1,0 +1,9 @@
+{
+  "ndcg@10": 0.5267,
+  "recall@10": 0.5908,
+  "hit@1": 0.5347,
+  "n_examples": 101,
+  "catalog_size": 37292,
+  "setting": "w/ inst",
+  "model": "bm25"
+}

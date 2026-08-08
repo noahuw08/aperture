@@ -1,0 +1,9 @@
+{
+  "ndcg@10": 0.2622,
+  "recall@10": 0.3119,
+  "hit@1": 0.2574,
+  "n_examples": 101,
+  "catalog_size": 37292,
+  "setting": "w/ inst",
+  "model": "intfloat/e5-base-v2"
+}
