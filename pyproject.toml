@@ -10,7 +10,9 @@ dependencies = []
 tokens = ["anthropic>=0.116"]
 # Phase 0 evaluation: ToolRet loading + the bi-encoder that makes baseline 4 honest.
 bench = ["datasets>=2.14", "sentence-transformers>=3.0"]
-dev = ["pytest>=8.0"]
+# Phase 2 data plane: the MCP protocol itself, client and server side.
+gateway = ["mcp>=1.2", "anyio>=4.0"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
 
 [build-system]
 requires = ["hatchling"]
@@ -18,3 +20,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_gateway_router"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
