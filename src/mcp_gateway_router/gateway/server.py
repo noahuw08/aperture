@@ -20,6 +20,7 @@ from typing import Any
 from ..catalog import Tool
 from ..selector import DecisionContext
 from .config import GatewayConfig
+from .environment import safe_capture_environment
 from .log import ExposureLog
 from .naming import advertised_name, parse_advertised
 from .policy import Policy
@@ -43,6 +44,9 @@ class Gateway:
         self._session_id = f"s-{int(time.time())}"
         self._exposed: set[tuple[str, str]] = set()
         self._called: list[tuple[str, str]] = []
+        # Captured once per session: it describes the session, not the request, and
+        # the git lookups shouldn't run on every tools/list.
+        self._environment = safe_capture_environment()
 
     def _context(self) -> DecisionContext:
         """What the gateway knows at ``tools/list``.
@@ -55,6 +59,7 @@ class Gateway:
             session_id=self._session_id,
             client_name="claude-code",
             tools_called=tuple(self._called),
+            environment=self._environment,
         )
 
     async def list_tools(self) -> list[Tool]:

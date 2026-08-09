@@ -36,6 +36,11 @@ class DecisionContext:
     # Task grain — decision points B and C only
     task: str | None = None
 
+    # In-band — ambient signals available at session open, before any prompt exists.
+    # This is the *entire* feature vector at decision point A: project, repo, branch,
+    # hour, weekday. Populated by the gateway; empty in the offline harness.
+    environment: dict[str, str] = field(default_factory=dict)
+
     # Out-of-band — stubbed until a ContextProvider exists
     tenant_features: dict = field(default_factory=dict)
     seat_features: dict = field(default_factory=dict)

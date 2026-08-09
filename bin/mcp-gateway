@@ -11,6 +11,13 @@
 # Everything else (upstreams, mode, budget, .env) comes from that file.
 set -euo pipefail
 
+# Capture the client's working directory FIRST, before anything can change it.
+# The client spawns this script with cwd set to the directory the user is working
+# in — that is the single most predictive point-A signal. It must be captured here
+# because `uv --directory` below sets the child's cwd to the gateway repo, and $PWD
+# is not reliable either: bash overwrites it with its own inherited cwd on startup.
+export MCP_GATEWAY_CLIENT_CWD="${MCP_GATEWAY_CLIENT_CWD:-$(pwd)}"
+
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="${MCP_GATEWAY_CONFIG:-${1:-$REPO/gateway.json}}"
 
