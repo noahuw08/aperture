@@ -62,36 +62,81 @@ fails as a confusing 401 later.
 
 ## Measured catalog — 2026-08-08
 
-**24 tools, playwright only.** Well short of the spec's 300–500 target.
+**95 tools across three servers, all live.**
 
-| Server | Transport | Tools | Status |
-|---|---|---|---|
-| playwright | stdio | 24 | ✅ |
-| github | http | — | ⛔ `401 AuthenticateToken authentication failed` |
-| notion | http | — | ⛔ `401 invalid_token` |
+| Server | Transport | Tools | Median chars | Max chars | Total chars |
+|---|---|---|---|---|---|
+| github | http | 47 | 958 | 2,746 | 47,100 |
+| notion | stdio | 24 | 2,909 | 5,743 | 73,554 |
+| playwright | stdio | 24 | 707 | 1,438 | 14,860 |
+| **all** | | **95** | **1,001** | **5,743** | **135,514** |
 
-Token costs: **not measured.** `ANTHROPIC_API_KEY` is unset, so the flat-120-per-tool
-placeholder still stands and the knapsack is still a top-K in disguise.
+Size is `name + description + compact input_schema`, in characters.
 
-## The two auth blockers
+### Finding 1 — schema size is decisively non-uniform, on a real catalog
 
-Both are the same shape: the gateway can reach the endpoints, and both reject it.
+**39× spread**, 146 characters (`playwright/browser_close`) to 5,743
+(`notion/API-update-page-markdown`), median 1,001, p95 3,205.
 
-**github — expired credential.** The PAT in `~/.claude.json` is well-formed (40 chars)
-but the endpoint returns `401 AuthenticateToken authentication failed`. Verified with a
-raw `curl` POST of `initialize`, so it is the credential and not our transport. Fix is a
-fresh token exported as `GITHUB_MCP_TOKEN`.
+Lower than the 85× measured over ToolRet's 37,292 tools, which is expected — a 95-tool
+catalog has less room in the tails. It is more than large enough for the distinction to
+bite: **`fill_budget` on this catalog is a genuine knapsack, not a top-K in disguise.**
+That was the open question the harvest existed to settle, and it is settled even before
+token counts land.
 
-**notion — OAuth, which the gateway does not implement.** `https://mcp.notion.com/mcp`
-returns `401 invalid_token`; there is no static token to supply. Claude Code performs an
-interactive OAuth flow and caches the result. Proxying notion needs an OAuth client in
-the gateway — discovery, authorization code flow, token storage and refresh. That is
-materially more work than the HTTP transport was and is not in the current plan.
+### Finding 2 — cost concentrates by server, and no doc says so
 
-**Why this matters beyond the tool count.** Q2 replays *real sessions*. If the gateway
-cannot proxy github and notion, the shadow-mode logs will not reflect the work actually
-done, and the cross-session dataset the whole Q2 half depends on is unrepresentative.
-This is a prerequisite, not a shortfall.
+**Notion is 25% of the tools and 54% of the bytes.** Its median schema is 2,909
+characters against playwright's 707 — 4×.
+
+This is new. Every doc treats the exposure decision as per-tool ranking under a budget.
+At real catalog composition, *which servers you connect* is itself a budget decision
+sitting upstream of any ranker, and connecting one verbose server can cost more than
+several terse ones combined. Worth carrying into the arm design: a selector that is
+server-blind will systematically overspend on whichever upstream happens to be wordiest.
+
+### Finding 3 — the whole catalog is a real recurring tax at this size
+
+135,514 characters of schema sit in the prompt prefix on every model call. Converting to
+tokens honestly needs `count_tokens`; a rough order of magnitude for dense JSON is
+**35–45k tokens per call**, and that estimate should be replaced with the measurement
+rather than cited.
+
+### Token costs: still not measured
+
+`ANTHROPIC_API_KEY` is valid, but the account has **zero credit balance** and that gates
+the entire API:
+
+```
+400 invalid_request_error — Your credit balance is too low to access the Anthropic API.
+```
+
+**Correction to an earlier note in this repo:** `count_tokens` is free *per call*, but it
+is not free to *reach* — the account still needs a non-zero balance. Adding the minimum
+credit unblocks it; the measurement itself consumes none of it.
+
+## Resolved blockers
+
+**github — the PAT was expired.** Verified with a raw `curl` POST of `initialize`
+(`401 AuthenticateToken authentication failed` on a well-formed 40-char token), which
+ruled out our transport. A fresh token in `GITHUB_MCP_TOKEN` fixed it. 47 tools.
+
+**notion — OAuth avoided entirely.** `https://mcp.notion.com/mcp` needs an interactive
+OAuth flow that the gateway would have had to implement: discovery, authorization code
+flow, token storage, refresh. Notion's official **stdio** server
+(`@notionhq/notion-mcp-server`) takes a static internal-integration token instead, so the
+upstream moved from `http` to `stdio` and the OAuth work disappeared. 24 tools.
+
+⚠️ **The Notion integration must be granted access to pages explicitly** — Connections →
+add integration, per page or teamspace. Without it the server authenticates cleanly and
+returns an empty workspace, which looks like a working setup with no content.
+
+## Still short of the spec's catalog target
+
+95 tools against a 300–500 target. The budget bites at 95 — 39× spread and 135k
+characters make that so — but the regime is thinner than the spec assumed. Adding public
+stdio servers would close the count gap while making the traffic *less* representative,
+since they would not appear in real sessions. That trade is a decision, not an oversight.
 
 ## Verified behaviour worth knowing
 
