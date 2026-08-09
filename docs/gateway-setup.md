@@ -60,6 +60,36 @@ fails as a confusing 401 later.
 `mode` is `shadow` (log the would-be selection, advertise everything) or `live`
 (actually cut). `server_id` may not contain `__`, which is the namespace separator.
 
+## Routing rule — one path per tool
+
+**A tool must be reachable by exactly one route.** If it is registered directly in the
+client *and* proxied by the gateway, calls route unpredictably: the gateway logs what it
+advertised but misses whatever went direct, so the dataset is **biased rather than merely
+incomplete**. It also makes the capture-rate probe return a false negative, because the
+client always has a second route to the tool the probe deliberately withheld.
+
+Verified the hard way: `~/gw-test` inherits the parent project's `github` and `playwright`
+registrations, so it was never isolated — a gateway session there saw every tool twice.
+`/mcp` shows the truth and should be checked before trusting any collected log.
+
+Current routing:
+
+| Server | Route | Why |
+|---|---|---|
+| github, playwright | **gateway only** — removed from direct registration | proxied, logged, part of the Q2 dataset |
+| notion | **direct only** — removed from `gateway.json` | see below |
+
+**Why notion is not proxied.** The two Notion servers expose different tool surfaces, not
+just different auth. The hosted OAuth server (`mcp.notion.com`) is markdown-oriented and
+high-level — `notion-search`, `notion-fetch`, `notion-update-page` with search-and-replace
+`update_content`. The stdio server is the raw REST API — `API-patch-block-children`,
+`API-update-a-block`, addressed by block ID. Document maintenance is materially harder on
+the latter, so notion keeps its direct hosted registration and stays outside the proxy.
+
+⚠️ **Consequence for Q2:** notion is **out of scope**, not "a tool the user never calls."
+The replay must exclude it explicitly — inferring zero usage from its absence would train
+on a distorted picture.
+
 ## Measured catalog — 2026-08-08
 
 **95 tools across three servers, all live.**

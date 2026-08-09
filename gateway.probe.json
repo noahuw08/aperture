@@ -8,7 +8,6 @@
   "pinned": [
     ["github", "get_me"],
     ["github", "list_pull_requests"],
-    ["notion", "API-get-self"],
     ["playwright", "browser_close"]
   ],
   "upstreams": [
@@ -17,13 +16,6 @@
       "transport": "stdio",
       "command": "npx",
       "args": ["-y", "@playwright/mcp@latest", "--browser", "chromium"]
-    },
-    {
-      "server_id": "notion",
-      "transport": "stdio",
-      "command": "npx",
-      "args": ["-y", "@notionhq/notion-mcp-server"],
-      "env": {"NOTION_TOKEN": "${NOTION_TOKEN}"}
     },
     {
       "server_id": "github",
