@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Launch the MCP gateway over stdio.
+#
+# Exists so client registration is one short path instead of a long argv that
+# breaks when pasted across a newline. Resolves the repo from its own location,
+# so it works regardless of the client's working directory.
+#
+#   claude mcp add gateway -- /path/to/repo/bin/mcp-gateway
+#
+# Config: $MCP_GATEWAY_CONFIG, else the first argument, else gateway.json.
+# Everything else (upstreams, mode, budget, .env) comes from that file.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONFIG="${MCP_GATEWAY_CONFIG:-${1:-$REPO/gateway.json}}"
+
+# stdout is the MCP transport — never write to it here.
+exec uv --directory "$REPO" run --extra gateway \
+    python -m mcp_gateway_router.gateway --config "$CONFIG" --log-level "${MCP_GATEWAY_LOG_LEVEL:-WARNING}"
