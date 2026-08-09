@@ -194,6 +194,59 @@ def test_env_placeholders_are_expanded_in_stdio_env(tmp_path, monkeypatch):
     assert upstream.env == {"API_KEY": "abc"}
 
 
+def test_a_dotenv_beside_the_config_supplies_placeholders(tmp_path, monkeypatch):
+    monkeypatch.delenv("GW_DOTENV_TOKEN", raising=False)
+    (tmp_path / ".env").write_text(
+        "# a comment\n"
+        "\n"
+        'GW_DOTENV_TOKEN="from-dotenv"\n'
+        "GW_UNUSED=whatever\n"
+    )
+    path = tmp_path / "gateway.json"
+    path.write_text(
+        json.dumps(
+            _payload(
+                upstreams=[
+                    {
+                        "server_id": "notion",
+                        "transport": "http",
+                        "url": "https://example.test/mcp",
+                        "headers": {"Authorization": "Bearer ${GW_DOTENV_TOKEN}"},
+                    }
+                ]
+            )
+        )
+    )
+
+    (upstream,) = GatewayConfig.from_file(path).upstreams
+
+    assert upstream.headers == {"Authorization": "Bearer from-dotenv"}
+
+
+def test_the_real_environment_wins_over_the_dotenv(tmp_path, monkeypatch):
+    monkeypatch.setenv("GW_DOTENV_TOKEN", "from-environment")
+    (tmp_path / ".env").write_text("GW_DOTENV_TOKEN=from-dotenv\n")
+    path = tmp_path / "gateway.json"
+    path.write_text(
+        json.dumps(
+            _payload(
+                upstreams=[
+                    {
+                        "server_id": "notion",
+                        "transport": "http",
+                        "url": "https://example.test/mcp",
+                        "headers": {"Authorization": "Bearer ${GW_DOTENV_TOKEN}"},
+                    }
+                ]
+            )
+        )
+    )
+
+    (upstream,) = GatewayConfig.from_file(path).upstreams
+
+    assert upstream.headers == {"Authorization": "Bearer from-environment"}
+
+
 def test_duplicate_server_ids_are_rejected(tmp_path):
     path = tmp_path / "gateway.json"
     path.write_text(

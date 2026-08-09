@@ -19,7 +19,28 @@ TRANSPORTS = ("stdio", "http")
 _PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
-def _expand(value: str, where: str) -> str:
+def _load_dotenv(path: Path) -> dict[str, str]:
+    """Read ``KEY=value`` lines from a ``.env`` beside the config.
+
+    Claude Code spawns the gateway as a subprocess, so relying on shell exports means
+    "works in my terminal, not in the client". A file next to the config removes that
+    whole class of problem. The real environment still wins, so CI and one-off overrides
+    behave as expected.
+    """
+    if not path.exists():
+        return {}
+
+    values: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
+def _expand(value: str, where: str, extra_env: dict[str, str] | None = None) -> str:
     """Substitute ``${VAR}`` from the environment.
 
     Raises rather than leaving the placeholder in place. A config file is committed to
@@ -31,8 +52,13 @@ def _expand(value: str, where: str) -> str:
     def replace(match: re.Match[str]) -> str:
         name = match.group(1)
         resolved = os.environ.get(name)
+        if resolved is None and extra_env is not None:
+            resolved = extra_env.get(name)
         if resolved is None:
-            raise ValueError(f"{where} references ${{{name}}}, which is not set")
+            raise ValueError(
+                f"{where} references ${{{name}}}, which is not set "
+                f"in the environment or in a .env beside the config"
+            )
         return resolved
 
     return _PLACEHOLDER.sub(replace, value)
@@ -77,6 +103,7 @@ class GatewayConfig:
     def from_file(cls, path: Path) -> "GatewayConfig":
         path = Path(path)
         payload = json.loads(path.read_text())
+        dotenv = _load_dotenv(path.parent / ".env")
 
         mode = payload.get("mode", "shadow")
         if mode not in MODES:
@@ -113,12 +140,12 @@ class GatewayConfig:
                     command=raw.get("command", ""),
                     args=tuple(raw.get("args", ())),
                     env={
-                        k: _expand(v, f"{where} env {k!r}")
+                        k: _expand(v, f"{where} env {k!r}", dotenv)
                         for k, v in raw.get("env", {}).items()
                     },
-                    url=_expand(raw.get("url", ""), f"{where} url"),
+                    url=_expand(raw.get("url", ""), f"{where} url", dotenv),
                     headers={
-                        k: _expand(v, f"{where} header {k!r}")
+                        k: _expand(v, f"{where} header {k!r}", dotenv)
                         for k, v in raw.get("headers", {}).items()
                     },
                 )

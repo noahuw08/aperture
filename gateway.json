@@ -13,15 +13,17 @@
       "args": ["-y", "@playwright/mcp@latest", "--browser", "chromium"]
     },
     {
+      "server_id": "notion",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@notionhq/notion-mcp-server"],
+      "env": {"NOTION_TOKEN": "${NOTION_TOKEN}"}
+    },
+    {
       "server_id": "github",
       "transport": "http",
       "url": "https://api.githubcopilot.com/mcp/",
       "headers": {"Authorization": "Bearer ${GITHUB_MCP_TOKEN}"}
-    },
-    {
-      "server_id": "notion",
-      "transport": "http",
-      "url": "https://mcp.notion.com/mcp"
     }
   ]
 }
