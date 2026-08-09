@@ -1,0 +1,35 @@
+{
+  "mode": "live",
+  "arm": "capture-rate-probe",
+  "budget_tokens": 100000,
+  "log_path": "runs/probe.jsonl",
+  "catalog_path": "results/catalog.json",
+  "model": "claude-opus-5",
+  "pinned": [
+    ["github", "get_me"],
+    ["github", "list_pull_requests"],
+    ["notion", "API-get-self"],
+    ["playwright", "browser_close"]
+  ],
+  "upstreams": [
+    {
+      "server_id": "playwright",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest", "--browser", "chromium"]
+    },
+    {
+      "server_id": "notion",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@notionhq/notion-mcp-server"],
+      "env": {"NOTION_TOKEN": "${NOTION_TOKEN}"}
+    },
+    {
+      "server_id": "github",
+      "transport": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {"Authorization": "Bearer ${GITHUB_MCP_TOKEN}"}
+    }
+  ]
+}
