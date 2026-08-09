@@ -98,6 +98,10 @@ class GatewayConfig:
     pinned: tuple[tuple[str, str], ...]
     log_path: Path
     model: str = "claude-opus-5"
+    # Harvested catalog with measured per-schema token costs. Produced by
+    # ``harvest.py`` (control plane) and read by the gateway (data plane), so that
+    # answering tools/list never requires a network call to measure costs.
+    catalog_path: Path | None = None
 
     @classmethod
     def from_file(cls, path: Path) -> "GatewayConfig":
@@ -155,6 +159,12 @@ class GatewayConfig:
         if not log_path.is_absolute():
             log_path = path.parent / log_path
 
+        catalog_path = payload.get("catalog_path")
+        if catalog_path is not None:
+            catalog_path = Path(catalog_path)
+            if not catalog_path.is_absolute():
+                catalog_path = path.parent / catalog_path
+
         return cls(
             upstreams=tuple(upstreams),
             mode=mode,
@@ -163,4 +173,5 @@ class GatewayConfig:
             pinned=tuple(tuple(p) for p in payload.get("pinned", [])),
             log_path=log_path,
             model=payload.get("model", "claude-opus-5"),
+            catalog_path=catalog_path,
         )

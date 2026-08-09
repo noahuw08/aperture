@@ -44,6 +44,22 @@ class Policy:
         self._counter = counter
         self._log = log
 
+    def _safe_cost(self, tool: Tool) -> int | None:
+        """Token cost for the log, or ``None`` if it could not be measured.
+
+        This runs *after* selection has already succeeded or failed open, so an
+        exception here would take down ``tools/list`` from outside the fail-open
+        boundary — the counter can raise on a cold cache, an unreachable API, or an
+        unfunded account. A missing cost degrades the log record; it never degrades
+        the client's tool set. ``None`` rather than a placeholder number, so an
+        unmeasured cost can never be mistaken for a measured one downstream.
+        """
+        try:
+            return self._counter.cost(tool)
+        except Exception:
+            logger.warning("could not measure token cost for %s", tool.uid)
+            return None
+
     def pinned_tools(self, catalog: Catalog) -> list[Tool]:
         """Pinned entries that are actually present. A stale pin is not fatal."""
         found = []
@@ -87,7 +103,7 @@ class Policy:
                     tool_uid=tool.uid,
                     score=0.0,
                     propensity=1.0,
-                    token_cost=self._counter.cost(tool),
+                    token_cost=self._safe_cost(tool),
                 )
                 for tool in chosen
             ],

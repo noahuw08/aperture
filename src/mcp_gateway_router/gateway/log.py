@@ -29,7 +29,9 @@ class ExposedTool:
     tool_uid: str
     score: float
     propensity: float
-    token_cost: int
+    # None when the cost could not be measured. Never a placeholder number — an
+    # unmeasured cost must not be mistakable for a measured one downstream.
+    token_cost: int | None
 
 
 def _now() -> str:

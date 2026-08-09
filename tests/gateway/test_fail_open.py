@@ -123,6 +123,76 @@ async def test_every_upstream_down_yields_an_empty_set_not_an_exception(tmp_path
     assert exposed == []
 
 
+class BrokenCounter:
+    """A token counter that always raises.
+
+    Stands in for AnthropicTokenCounter with no credit balance, no network, or a
+    cold cache — all of which surface as an exception from cost().
+    """
+
+    def cost(self, tool):
+        raise RuntimeError("count_tokens unreachable")
+
+
+async def test_a_broken_token_counter_does_not_take_down_tools_list(tmp_path):
+    """The counter is consulted while *logging*, outside selection's try/except.
+
+    An unreachable counter must degrade the log record, never the client's tool set.
+    """
+    config = GatewayConfig(
+        upstreams=(UpstreamSpec(server_id="github", command="noop"),),
+        mode="live",
+        arm="chaos",
+        budget_tokens=250,
+        pinned=(("github", "a"),),
+        log_path=tmp_path / "exposure.jsonl",
+    )
+
+    async def factory(spec):
+        return FakeSession(["a", "b", "c"])
+
+    pool = UpstreamPool(config.upstreams, session_factory=factory)
+    await pool.start()
+    log = ExposureLog(config.log_path)
+    policy = Policy(config, HeadSelector(), BrokenCounter(), log)
+    gateway = Gateway(config, pool, policy, log)
+
+    exposed = await gateway.list_tools()
+    log.close()
+
+    # Selection itself fails (fill_budget needs costs), so we fail open to pinned.
+    assert [t.name for t in exposed] == ["a"]
+
+
+async def test_an_unmeasurable_tool_is_logged_with_a_null_cost(tmp_path):
+    """A cost we could not measure is recorded as null, never as a fake number."""
+    import json
+
+    config = GatewayConfig(
+        upstreams=(UpstreamSpec(server_id="github", command="noop"),),
+        mode="live",
+        arm="chaos",
+        budget_tokens=250,
+        pinned=(("github", "a"),),
+        log_path=tmp_path / "exposure.jsonl",
+    )
+
+    async def factory(spec):
+        return FakeSession(["a", "b", "c"])
+
+    pool = UpstreamPool(config.upstreams, session_factory=factory)
+    await pool.start()
+    log = ExposureLog(config.log_path)
+    policy = Policy(config, HeadSelector(), BrokenCounter(), log)
+    gateway = Gateway(config, pool, policy, log)
+
+    await gateway.list_tools()
+    log.close()
+
+    record = json.loads((tmp_path / "exposure.jsonl").read_text().splitlines()[0])
+    assert record["exposed"][0]["token_cost"] is None
+
+
 async def test_an_upstream_that_fails_to_start_does_not_prevent_serving(tmp_path):
     async def factory(spec):
         raise RuntimeError("spawn failed")

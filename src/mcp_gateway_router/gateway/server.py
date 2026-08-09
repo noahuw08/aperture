@@ -11,6 +11,7 @@ supported way to serve a tool list that changes at runtime.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from pathlib import Path
@@ -109,19 +110,57 @@ def build_app(gateway: Gateway):
     return _GatewayApp("mcp-gateway")
 
 
+DEFAULT_TOKEN_COST = 100
+CHARS_PER_TOKEN = 3.4  # measured on the harvested catalog; dense JSON schemas
+
+
+def build_counter(config: GatewayConfig):
+    """Token costs for the data plane, read from the harvested catalog.
+
+    **This never calls the Anthropic API.** Answering ``tools/list`` happens on every
+    session open; measuring costs there would put a network round trip — and an
+    account-balance dependency — in the critical path of the proxy. Measurement is a
+    control-plane job: ``harvest.py`` runs ``count_tokens`` once and writes
+    ``results/catalog.json``; the gateway reads it.
+
+    Falls back to a character-length estimate for tools absent from the artifact, so
+    a stale or missing catalog degrades cost accuracy rather than availability.
+    """
+    from ..tokens import StaticTokenCounter
+
+    costs: dict[str, int] = {}
+    if config.catalog_path is not None and config.catalog_path.exists():
+        payload = json.loads(config.catalog_path.read_text())
+        costs = {k: int(v) for k, v in payload.get("costs", {}).items()}
+        logger.info("loaded %d measured token costs from %s", len(costs), config.catalog_path)
+    else:
+        logger.warning(
+            "no harvested catalog at %s; token costs are estimated from schema length",
+            config.catalog_path,
+        )
+
+    class _CatalogCounter(StaticTokenCounter):
+        def cost(self, tool: Tool) -> int:
+            measured = self._costs.get(tool.uid)
+            if measured is not None:
+                return measured
+            body = tool.name + tool.description + json.dumps(
+                tool.input_schema, separators=(",", ":")
+            )
+            return max(1, int(len(body) / CHARS_PER_TOKEN))
+
+    return _CatalogCounter(costs, default=DEFAULT_TOKEN_COST)
+
+
 async def serve(config_path: Path) -> None:
     from ..baselines import StaticSet
-    from ..tokens import AnthropicTokenCounter
 
     config = GatewayConfig.from_file(config_path)
     pool = UpstreamPool(config.upstreams)
     await pool.start()
 
     log = ExposureLog(config.log_path)
-    counter = AnthropicTokenCounter(
-        model=config.model,
-        cache_path=config.log_path.parent / "token_costs.json",
-    )
+    counter = build_counter(config)
 
     selector = StaticSet(config.pinned)
     policy = Policy(config, selector, counter, log)
