@@ -74,6 +74,24 @@ def test_shadow_mode_returns_everything_but_logs_the_selection(tmp_path):
     assert len(exposed) == 10
     (record,) = _records(config.log_path)
     assert len(record["exposed"]) == 2
+    # exposed=[] would otherwise be ambiguous between "shadow, client got all" and
+    # "live, selector chose nothing" — mode and n_advertised disambiguate.
+    assert record["mode"] == "shadow"
+    assert record["n_advertised"] == 10
+
+
+def test_live_mode_records_what_the_client_actually_received(tmp_path):
+    config = _config(tmp_path, mode="live")
+    log = ExposureLog(config.log_path)
+    policy = Policy(config, HeadSelector(), StaticTokenCounter({}, default=100), log)
+
+    policy.decide(_catalog(), "hash1", DecisionContext(session_id="s1"))
+    log.close()
+
+    (record,) = _records(config.log_path)
+    assert record["mode"] == "live"
+    assert record["n_advertised"] == 2
+    assert record["n_candidates"] == 10
 
 
 def test_a_raising_selector_fails_open_to_the_pinned_core(tmp_path):

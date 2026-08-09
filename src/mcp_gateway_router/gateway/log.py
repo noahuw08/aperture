@@ -59,20 +59,35 @@ class ExposureLog:
         *,
         session_id: str,
         arm: str,
+        mode: str,
         decision_point: str,
         catalog_hash: str,
         selector_version: str,
         budget_tokens: int,
         context: dict[str, Any],
         n_candidates: int,
+        n_advertised: int,
         exposed: list[ExposedTool],
     ) -> None:
+        """One exposure decision.
+
+        ``exposed`` is what the selector *chose*; ``n_advertised`` is what the client
+        actually received. In ``live`` mode they match. In ``shadow`` mode the client
+        receives the whole catalog regardless, so ``exposed`` is a counterfactual and
+        ``n_advertised == n_candidates``.
+
+        Both are recorded because ``exposed: []`` is otherwise ambiguous — it reads
+        identically for "shadow mode, client got everything" and "live mode, selector
+        returned nothing", which are opposite situations.
+        """
         self._write(
             {
                 "kind": "decision",
                 "ts": _now(),
                 "session_id": session_id,
                 "arm": arm,
+                "mode": mode,
+                "n_advertised": n_advertised,
                 "decision_point": decision_point,
                 "catalog_hash": catalog_hash,
                 "selector_version": selector_version,

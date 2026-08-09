@@ -14,6 +14,8 @@ def test_decision_record_carries_propensity_and_token_cost(tmp_path):
     log.decision(
         session_id="s1",
         arm="passthrough",
+        mode="live",
+        n_advertised=1,
         decision_point="A",
         catalog_hash="abc123",
         selector_version="passthrough/1",

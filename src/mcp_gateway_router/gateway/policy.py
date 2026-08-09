@@ -89,9 +89,13 @@ class Policy:
             chosen = pinned
             version = "fail-open"
 
+        advertised = list(catalog) if self._config.mode == "shadow" else chosen
+
         self._log.decision(
             session_id=context.session_id or "unknown",
             arm=self._config.arm,
+            mode=self._config.mode,
+            n_advertised=len(advertised),
             decision_point="C" if context.task else "A",
             catalog_hash=catalog_hash,
             selector_version=version,
@@ -109,6 +113,4 @@ class Policy:
             ],
         )
 
-        if self._config.mode == "shadow":
-            return list(catalog)
-        return chosen
+        return advertised
