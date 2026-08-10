@@ -40,6 +40,10 @@ class ArmResult:
     tool_search_calls: int
     tool_calls: dict[str, int] = field(default_factory=dict)
     error: str | None = None
+    #: Set by the matrix once the task's assertion has been applied. `ok` means the
+    #: run completed; `passed` means it produced the right answer. A run can be `ok`
+    #: and wrong, which is exactly the case worth counting.
+    passed: bool = False
 
     @property
     def prefix_tokens(self) -> int:
