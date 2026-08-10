@@ -1,0 +1,32 @@
+flowchart LR
+  LOGS[("runs/*.jsonl<br/>one file per session")]
+  CAT[("results/catalog.json")]
+
+  subgraph Q2["Q2 - point A - FREE - zero model calls"]
+    direction TB
+    SESS["replay/sessions.py<br/>SessionRecord<br/>env + ordered calls"]
+    HARN["replay/harness.py<br/>walk in time order<br/>history passed at construction"]
+    ARMS2["random - null<br/>d-global<br/>d-recent<br/>YOUR ENGINE<br/>oracle - ceiling"]
+    COV["coverage by budget<br/>fraction of called tools<br/>exposed at session open"]
+    SESS --> HARN --> ARMS2 --> COV
+  end
+
+  subgraph Q1["Q1 - point C - COSTS MODEL RUNS"]
+    direction TB
+    BAT["task battery<br/>authored FROM real sessions"]
+    RUN["bench/runner.py<br/>Claude Agent SDK<br/>subscription auth"]
+    ARMS1["A - tool search cuts<br/>C - our selection<br/>R - random<br/>O - oracle"]
+    SUCC["task success at<br/>matched measured cost"]
+    BAT --> RUN --> ARMS1 --> SUCC
+  end
+
+  LOGS --> SESS
+  LOGS -.->|tasks drawn from real work| BAT
+  CAT --> HARN
+  CAT --> ARMS1
+
+  COV --> V1["answers: is there exploitable<br/>structure before the prompt?"]
+  SUCC --> V2["answers Gate 0: does tool search<br/>already moot ranking-with-a-prompt?"]
+
+  NOTE["tool search defers schemas at ~0 prefix cost<br/>so precision - round trips - wrong picks<br/>are INVISIBLE to coverage"]
+  NOTE -.-> SUCC

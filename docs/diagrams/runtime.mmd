@@ -1,0 +1,40 @@
+flowchart TB
+  CC["Claude Code<br/>one gateway per session"]
+
+  subgraph GW["Gateway process"]
+    direction TB
+    SHIM["bin/mcp-gateway<br/>captures client cwd<br/>before uv changes it"]
+    ENV["environment.py<br/>project - repo - branch<br/>hour - weekday"]
+    POOL["UpstreamPool<br/>aggregate + namespace"]
+    POL{"policy.decide<br/>mode?"}
+    FO["fail-open<br/>serve pinned core"]
+    LOG["ExposureLog"]
+  end
+
+  subgraph UP["Upstream MCP servers"]
+    GH["github - HTTP<br/>47 tools"]
+    NO["notion - stdio<br/>24 tools"]
+    PW["playwright - stdio<br/>24 tools"]
+  end
+
+  HARV["harvest.py<br/>control plane - runs rarely"]
+  CAT[("results/catalog.json<br/>95 tools + measured costs")]
+  LOGS[("runs/session-id.jsonl<br/>decision + call records")]
+
+  CC -->|spawns| SHIM
+  SHIM --> ENV
+  SHIM --> POOL
+  POOL --> GH
+  POOL --> NO
+  POOL --> PW
+  HARV -.->|tools/list + count_tokens| CAT
+  CAT -->|token costs - no network at request time| POL
+  ENV -->|"DecisionContext - task = None"| POL
+  POOL -->|catalog| POL
+  POL -->|"selector raised"| FO
+  POL ==>|"SHADOW: advertise all 95"| CC
+  POL ==>|"LIVE: advertise the cut"| CC
+  POL -->|"decision record"| LOG
+  CC -->|"tools/call"| POOL
+  POOL -->|"call record + was_exposed"| LOG
+  LOG --> LOGS
