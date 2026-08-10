@@ -1,0 +1,21 @@
+{
+  "_warning": "THROWAWAY. Invented at a desk to exercise the harness, NOT drawn from observed sessions. Delete before authoring the real battery — using these as evidence would relocate the house failure mode from the personas into the task mix.",
+  "tasks": [
+    {
+      "task_id": "gh-search-count",
+      "prompt": "How many public results mention modelcontextprotocol? Report only the number.",
+      "expect": "1458176",
+      "match": "number",
+      "required_tools": [["github", "search_code"]],
+      "notes": "throwaway. The count drifts as the index changes — re-baseline before any real use."
+    },
+    {
+      "task_id": "gh-whoami",
+      "prompt": "What login handle am I signed in with? Reply with the handle only.",
+      "expect": "noahuw08",
+      "match": "contains",
+      "required_tools": [["github", "get_me"]],
+      "notes": "throwaway. Reworded to drop 'GitHub', 'account' and 'authenticated', which the tool description reuses."
+    }
+  ]
+}

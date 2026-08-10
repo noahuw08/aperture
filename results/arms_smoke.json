@@ -1,0 +1,36 @@
+{
+  "A-toolsearch": {
+    "success": 0.5,
+    "prefix": 31712.0,
+    "turns": 3.0,
+    "searches": 1.0,
+    "cost": 0.1361,
+    "cells": [
+      {
+        "task_id": "gh-search-count",
+        "rate": 0.0
+      },
+      {
+        "task_id": "gh-whoami",
+        "rate": 1.0
+      }
+    ]
+  },
+  "C-semantic": {
+    "success": 0.5,
+    "prefix": 27676.0,
+    "turns": 3.0,
+    "searches": 1.0,
+    "cost": 0.1968,
+    "cells": [
+      {
+        "task_id": "gh-search-count",
+        "rate": 0.0
+      },
+      {
+        "task_id": "gh-whoami",
+        "rate": 1.0
+      }
+    ]
+  }
+}
