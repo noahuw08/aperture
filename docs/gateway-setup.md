@@ -60,6 +60,55 @@ fails as a confusing 401 later.
 `mode` is `shadow` (log the would-be selection, advertise everything) or `live`
 (actually cut). `server_id` may not contain `__`, which is the namespace separator.
 
+## Probe results — 2026-08-10
+
+Run headlessly through the Agent SDK (`bench/runner.py` pointed at `gateway.probe.json`),
+which gives per-run token accounting and `ToolSearch` counts an interactive session cannot
+export. Reproduce by pointing `run_arm` at the two configs.
+
+### 1 · Capture rate — **negative.** The miss signal has no channel on this client.
+
+```
+mode live | advertised 4 of 95
+call records: 0
+```
+
+With `github__search_code` deliberately withheld, the agent **never attempted it**. It ran
+`ToolSearch` twice, saw the tool was unavailable, and completed the task via `Bash` —
+volunteering *"this did not come from the GitHub MCP tools"* in its answer.
+
+**`was_exposed: false` therefore cannot be collected here.** Claude Code resolves
+availability through tool search *before* generating a call, so there is no failed call to
+observe. This matters well beyond the probe: "measure demand for tools you are not serving"
+is named in the roadmap as core differentiation, and on this client that mechanism does not
+exist.
+
+⚠️ **A replacement signal exists but lives elsewhere.** The agent narrates the workaround
+and falls back to another tool. That is visible in *model output*, not in the gateway log —
+so it is observable to Q1 and invisible to Q2. Any missing-demand claim has to be rebuilt on
+that footing, or on a client that behaves differently.
+
+### 2 · Deferral holds at 4 tools — no threshold confound
+
+`ToolSearch` fired even with only 4 tools exposed, so there is no catalog size at which the
+client switches from deferring to loading eagerly. **Arm C is not confounded by a mechanism
+switch**: both arms get the same deferral behaviour, and the comparison is about selection
+quality rather than about which side of a threshold an arm landed on.
+
+### 3 · Directional signal — cutting the catalog made it *worse*
+
+| | ToolSearch calls | turns | prefix tokens |
+|---|---|---|---|
+| 4 tools (cut) | 2 | 4 | 31,488 |
+| 95 tools (all) | 1 | 3 | 31,893 |
+
+Same correct answer, more work to reach it, and **essentially identical prefix cost** —
+confirming there is no token saving to trade against the extra turns.
+
+This is n=1 on a deliberately bad cut (4 pinned tools unrelated to the task), so it is not a
+Gate 0 reading. It is the direction arm C has to overcome, and the prefix column is the
+reason it cannot overcome it on cost.
+
 ## Routing rule — one path per tool
 
 **A tool must be reachable by exactly one route.** If it is registered directly in the
