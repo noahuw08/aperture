@@ -72,23 +72,33 @@ Verified the hard way: `~/gw-test` inherits the parent project's `github` and `p
 registrations, so it was never isolated — a gateway session there saw every tool twice.
 `/mcp` shows the truth and should be checked before trusting any collected log.
 
-Current routing:
+Current routing: **everything through the gateway.** `github`, `playwright` and `notion`
+are all proxied; none is registered directly in the client.
 
-| Server | Route | Why |
-|---|---|---|
-| github, playwright | **gateway only** — removed from direct registration | proxied, logged, part of the Q2 dataset |
-| notion | **direct only** — removed from `gateway.json` | see below |
+**Notion was briefly excluded and that was a mistake worth recording.** The stated reason
+was that the stdio server exposes only the raw REST API (`API-patch-block-children`,
+`API-update-a-block`, addressed by block ID) while the hosted OAuth server is
+markdown-oriented with a convenient search-and-replace. That was asserted without checking.
+`API-update-page-markdown` in fact takes `update_content`, `insert_content`,
+`replace_content` and `replace_content_range` — the same operations, one nesting level
+deeper:
 
-**Why notion is not proxied.** The two Notion servers expose different tool surfaces, not
-just different auth. The hosted OAuth server (`mcp.notion.com`) is markdown-oriented and
-high-level — `notion-search`, `notion-fetch`, `notion-update-page` with search-and-replace
-`update_content`. The stdio server is the raw REST API — `API-patch-block-children`,
-`API-update-a-block`, addressed by block ID. Document maintenance is materially harder on
-the latter, so notion keeps its direct hosted registration and stays outside the proxy.
+```json
+{"page_id": "...", "type": "update_content",
+ "update_content": {"content_updates": [{"old_str": "...", "new_str": "..."}]}}
+```
 
-⚠️ **Consequence for Q2:** notion is **out of scope**, not "a tool the user never calls."
-The replay must exclude it explicitly — inferring zero usage from its absence would train
-on a distorted picture.
+Verified against the live scoping page with a no-op replacement.
+
+**The real difference is auth scope, not capability.** The hosted server uses OAuth and
+sees everything the account can. The stdio server uses an internal integration token and
+sees only pages explicitly shared with that integration. If a page returns 404 or 403
+through the gateway, add the integration under that page's **Connections** — it is a
+per-page grant, not a global one.
+
+Excluding notion would have cost 24 of 95 tools and, more importantly, the server that
+produced the cost-concentration finding — it is a quarter of the tools and over half the
+schema bytes. Completeness of the dataset beat convenience.
 
 ## Measured catalog — 2026-08-08
 
