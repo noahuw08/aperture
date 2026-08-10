@@ -34,7 +34,7 @@ def _load_engine(spec: str):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--log", type=Path, default=Path("runs/exposure.jsonl"))
+    parser.add_argument("--log", type=Path, default=Path("runs"))
     parser.add_argument("--catalog", type=Path, default=Path("results/catalog.json"))
     parser.add_argument("--budgets", type=int, nargs="+", default=list(DEFAULT_BUDGETS))
     parser.add_argument("--engine", help="module:factory for your own selector")

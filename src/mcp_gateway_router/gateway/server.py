@@ -41,7 +41,8 @@ class Gateway:
         self._pool = pool
         self._policy = policy
         self._log = log
-        self._session_id = f"s-{int(time.time())}"
+        # Take the id from the log so the filename and the records agree.
+        self._session_id = log.session_id
         self._exposed: set[tuple[str, str]] = set()
         self._called: list[tuple[str, str]] = []
         # Captured once per session: it describes the session, not the request, and
@@ -164,7 +165,7 @@ async def serve(config_path: Path) -> None:
     pool = UpstreamPool(config.upstreams)
     await pool.start()
 
-    log = ExposureLog(config.log_path)
+    log = ExposureLog(config.log_dir)
     counter = build_counter(config)
 
     selector = StaticSet(config.pinned)

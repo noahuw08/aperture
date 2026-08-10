@@ -10,7 +10,7 @@ def _payload(**overrides):
         "mode": "shadow",
         "arm": "passthrough",
         "budget_tokens": 3000,
-        "log_path": "runs/exposure.jsonl",
+        "log_dir": "runs",
         "pinned": [["github", "search_code"]],
         "upstreams": [
             {"server_id": "github", "command": "npx", "args": ["-y", "gh-mcp"]},
@@ -34,13 +34,13 @@ def test_from_file_parses_upstreams_and_pinned(tmp_path):
     )
 
 
-def test_log_path_is_resolved_relative_to_the_config_file(tmp_path):
+def test_log_dir_is_resolved_relative_to_the_config_file(tmp_path):
     path = tmp_path / "gateway.json"
     path.write_text(json.dumps(_payload()))
 
     config = GatewayConfig.from_file(path)
 
-    assert config.log_path == tmp_path / "runs" / "exposure.jsonl"
+    assert config.log_dir == tmp_path / "runs"
 
 
 def test_unknown_mode_is_rejected(tmp_path):

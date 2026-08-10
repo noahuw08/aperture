@@ -55,7 +55,7 @@ async def test_harvest_aggregates_without_counting_tokens(tmp_path):
         arm="passthrough",
         budget_tokens=3000,
         pinned=(),
-        log_path=tmp_path / "exposure.jsonl",
+        log_dir=tmp_path,
     )
 
     async def factory(spec):

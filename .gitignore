@@ -13,4 +13,4 @@ build/
 logs/
 artifacts/
 *.parquet
-runs/
+runs/*.jsonl

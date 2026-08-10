@@ -52,15 +52,35 @@ def _parse_tool_uid(uid: str) -> ToolKey | None:
 def load_sessions(path: Path) -> list[SessionRecord]:
     """Read an exposure log into chronologically ordered sessions.
 
+    ``path`` may be a directory of per-session ``*.jsonl`` files (how the gateway writes
+    them) or a single file (older single-file logs, and test fixtures).
+
     Tolerant by design: a malformed or truncated line is skipped rather than fatal. The
     log is append-only and flushed per record, but a process killed mid-write can still
     leave a partial final line, and losing a week of collection to one bad byte would be
     a poor trade.
     """
+    path = Path(path)
+    files = sorted(path.glob("*.jsonl")) if path.is_dir() else [path]
+
     sessions: dict[str, SessionRecord] = {}
     calls: dict[str, list[ToolKey]] = {}
 
-    for lineno, line in enumerate(Path(path).read_text().splitlines(), start=1):
+    for file in files:
+        _absorb(file, sessions, calls)
+
+    for session_id, keys in calls.items():
+        sessions[session_id].called = tuple(keys)
+
+    return sorted(sessions.values(), key=lambda s: (s.opened_at, s.session_id))
+
+
+def _absorb(
+    path: Path,
+    sessions: dict[str, SessionRecord],
+    calls: dict[str, list[ToolKey]],
+) -> None:
+    for lineno, line in enumerate(path.read_text().splitlines(), start=1):
         line = line.strip()
         if not line:
             continue
@@ -99,8 +119,3 @@ def load_sessions(path: Path) -> list[SessionRecord]:
                 sessions[session_id] = SessionRecord(
                     session_id=session_id, opened_at=_parse_ts(record["ts"])
                 )
-
-    for session_id, keys in calls.items():
-        sessions[session_id].called = tuple(keys)
-
-    return sorted(sessions.values(), key=lambda s: (s.opened_at, s.session_id))

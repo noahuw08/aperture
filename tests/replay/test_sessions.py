@@ -154,3 +154,37 @@ def test_a_truncated_final_line_does_not_lose_the_file(tmp_path):
     sessions = load_sessions(path)
 
     assert [s.session_id for s in sessions] == ["s1"]
+
+
+def test_a_directory_of_per_session_files_is_merged(tmp_path):
+    """The gateway writes one file per session; the loader reads the whole directory."""
+    logs = tmp_path / "runs"
+    logs.mkdir()
+    _write(
+        logs / "s1.jsonl",
+        [
+            _decision("s1", "2026-08-09T10:00:00Z", {"project": "alpha"}),
+            _call("s1", "2026-08-09T10:00:05Z", "github/get_me"),
+        ],
+    )
+    _write(
+        logs / "s2.jsonl",
+        [
+            _decision("s2", "2026-08-09T09:00:00Z", {"project": "beta"}),
+            _call("s2", "2026-08-09T09:00:05Z", "github/search_code"),
+        ],
+    )
+
+    sessions = load_sessions(logs)
+
+    assert [s.session_id for s in sessions] == ["s2", "s1"]
+    assert sessions[0].environment["project"] == "beta"
+
+
+def test_one_corrupt_session_file_does_not_lose_the_others(tmp_path):
+    logs = tmp_path / "runs"
+    logs.mkdir()
+    _write(logs / "good.jsonl", [_decision("good", "2026-08-09T10:00:00Z")])
+    (logs / "bad.jsonl").write_text('{"kind": "decision", "ses')
+
+    assert [s.session_id for s in load_sessions(logs)] == ["good"]

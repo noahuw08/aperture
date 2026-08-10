@@ -69,11 +69,11 @@ async def _build(tmp_path, selector, session=None):
         arm="chaos",
         budget_tokens=250,
         pinned=(("github", "a"),),
-        log_path=tmp_path / "exposure.jsonl",
+        log_dir=tmp_path,
     )
     pool = UpstreamPool(config.upstreams, session_factory=factory)
     await pool.start()
-    log = ExposureLog(config.log_path)
+    log = ExposureLog(config.log_dir)
     policy = Policy(config, selector, StaticTokenCounter({}, default=100), log)
     return Gateway(config, pool, policy, log), log, config
 
@@ -145,7 +145,7 @@ async def test_a_broken_token_counter_does_not_take_down_tools_list(tmp_path):
         arm="chaos",
         budget_tokens=250,
         pinned=(("github", "a"),),
-        log_path=tmp_path / "exposure.jsonl",
+        log_dir=tmp_path,
     )
 
     async def factory(spec):
@@ -153,7 +153,7 @@ async def test_a_broken_token_counter_does_not_take_down_tools_list(tmp_path):
 
     pool = UpstreamPool(config.upstreams, session_factory=factory)
     await pool.start()
-    log = ExposureLog(config.log_path)
+    log = ExposureLog(config.log_dir)
     policy = Policy(config, HeadSelector(), BrokenCounter(), log)
     gateway = Gateway(config, pool, policy, log)
 
@@ -174,7 +174,7 @@ async def test_an_unmeasurable_tool_is_logged_with_a_null_cost(tmp_path):
         arm="chaos",
         budget_tokens=250,
         pinned=(("github", "a"),),
-        log_path=tmp_path / "exposure.jsonl",
+        log_dir=tmp_path,
     )
 
     async def factory(spec):
@@ -182,14 +182,14 @@ async def test_an_unmeasurable_tool_is_logged_with_a_null_cost(tmp_path):
 
     pool = UpstreamPool(config.upstreams, session_factory=factory)
     await pool.start()
-    log = ExposureLog(config.log_path)
+    log = ExposureLog(config.log_dir)
     policy = Policy(config, HeadSelector(), BrokenCounter(), log)
     gateway = Gateway(config, pool, policy, log)
 
     await gateway.list_tools()
     log.close()
 
-    record = json.loads((tmp_path / "exposure.jsonl").read_text().splitlines()[0])
+    record = json.loads(log.path.read_text().splitlines()[0])
     assert record["exposed"][0]["token_cost"] is None
 
 
@@ -203,11 +203,11 @@ async def test_an_upstream_that_fails_to_start_does_not_prevent_serving(tmp_path
         arm="chaos",
         budget_tokens=250,
         pinned=(("github", "a"),),
-        log_path=tmp_path / "exposure.jsonl",
+        log_dir=tmp_path,
     )
     pool = UpstreamPool(config.upstreams, session_factory=factory)
     await pool.start()
-    log = ExposureLog(config.log_path)
+    log = ExposureLog(config.log_dir)
     policy = Policy(config, HeadSelector(), StaticTokenCounter({}, default=100), log)
     gateway = Gateway(config, pool, policy, log)
 

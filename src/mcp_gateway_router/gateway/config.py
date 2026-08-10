@@ -96,7 +96,11 @@ class GatewayConfig:
     arm: str
     budget_tokens: int
     pinned: tuple[tuple[str, str], ...]
-    log_path: Path
+    # A *directory*. Each session writes its own `{session_id}.jsonl` inside it.
+    # One shared file would be appended to concurrently by every gateway instance —
+    # one per Claude Code window — and interleaved writes corrupt records once they
+    # grow past a single atomic write, which live mode makes routine.
+    log_dir: Path
     model: str = "claude-opus-5"
     # Harvested catalog with measured per-schema token costs. Produced by
     # ``harvest.py`` (control plane) and read by the gateway (data plane), so that
@@ -155,9 +159,9 @@ class GatewayConfig:
                 )
             )
 
-        log_path = Path(payload.get("log_path", "runs/exposure.jsonl"))
-        if not log_path.is_absolute():
-            log_path = path.parent / log_path
+        log_dir = Path(payload.get("log_dir", "runs"))
+        if not log_dir.is_absolute():
+            log_dir = path.parent / log_dir
 
         catalog_path = payload.get("catalog_path")
         if catalog_path is not None:
@@ -171,7 +175,7 @@ class GatewayConfig:
             arm=payload.get("arm", "passthrough"),
             budget_tokens=int(payload.get("budget_tokens", 3000)),
             pinned=tuple(tuple(p) for p in payload.get("pinned", [])),
-            log_path=log_path,
+            log_dir=log_dir,
             model=payload.get("model", "claude-opus-5"),
             catalog_path=catalog_path,
         )

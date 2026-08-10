@@ -20,7 +20,7 @@ def _config(tmp_path, catalog_path=None):
         arm="passthrough",
         budget_tokens=3000,
         pinned=(),
-        log_path=tmp_path / "exposure.jsonl",
+        log_dir=tmp_path,
         catalog_path=catalog_path,
     )
 

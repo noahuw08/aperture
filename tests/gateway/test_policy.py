@@ -24,7 +24,7 @@ def _config(tmp_path, mode="live", pinned=(("github", "t0"),), budget=250):
         arm="test-arm",
         budget_tokens=budget,
         pinned=tuple(pinned),
-        log_path=tmp_path / "exposure.jsonl",
+        log_dir=tmp_path,
     )
 
 
@@ -52,7 +52,7 @@ def _records(path):
 
 def test_live_mode_returns_the_selection(tmp_path):
     config = _config(tmp_path, mode="live")
-    log = ExposureLog(config.log_path)
+    log = ExposureLog(config.log_dir)
     policy = Policy(config, HeadSelector(), StaticTokenCounter({}, default=100), log)
 
     exposed = policy.decide(_catalog(), "hash1", DecisionContext(session_id="s1"))
@@ -65,14 +65,14 @@ def test_live_mode_returns_the_selection(tmp_path):
 
 def test_shadow_mode_returns_everything_but_logs_the_selection(tmp_path):
     config = _config(tmp_path, mode="shadow")
-    log = ExposureLog(config.log_path)
+    log = ExposureLog(config.log_dir)
     policy = Policy(config, HeadSelector(), StaticTokenCounter({}, default=100), log)
 
     exposed = policy.decide(_catalog(), "hash1", DecisionContext(session_id="s1"))
     log.close()
 
     assert len(exposed) == 10
-    (record,) = _records(config.log_path)
+    (record,) = _records(log.path)
     assert len(record["exposed"]) == 2
     # exposed=[] would otherwise be ambiguous between "shadow, client got all" and
     # "live, selector chose nothing" — mode and n_advertised disambiguate.
@@ -82,13 +82,13 @@ def test_shadow_mode_returns_everything_but_logs_the_selection(tmp_path):
 
 def test_live_mode_records_what_the_client_actually_received(tmp_path):
     config = _config(tmp_path, mode="live")
-    log = ExposureLog(config.log_path)
+    log = ExposureLog(config.log_dir)
     policy = Policy(config, HeadSelector(), StaticTokenCounter({}, default=100), log)
 
     policy.decide(_catalog(), "hash1", DecisionContext(session_id="s1"))
     log.close()
 
-    (record,) = _records(config.log_path)
+    (record,) = _records(log.path)
     assert record["mode"] == "live"
     assert record["n_advertised"] == 2
     assert record["n_candidates"] == 10
@@ -96,27 +96,27 @@ def test_live_mode_records_what_the_client_actually_received(tmp_path):
 
 def test_a_raising_selector_fails_open_to_the_pinned_core(tmp_path):
     config = _config(tmp_path, mode="live")
-    log = ExposureLog(config.log_path)
+    log = ExposureLog(config.log_dir)
     policy = Policy(config, ExplodingSelector(), StaticTokenCounter({}, default=100), log)
 
     exposed = policy.decide(_catalog(), "hash1", DecisionContext(session_id="s1"))
     log.close()
 
     assert [t.name for t in exposed] == ["t0"]
-    (record,) = _records(config.log_path)
+    (record,) = _records(log.path)
     assert record["selector_version"] == "fail-open"
 
 
 def test_decision_is_logged_with_propensity_and_context(tmp_path):
     config = _config(tmp_path, mode="live")
-    log = ExposureLog(config.log_path)
+    log = ExposureLog(config.log_dir)
     policy = Policy(config, HeadSelector(), StaticTokenCounter({}, default=100), log)
 
     context = DecisionContext(session_id="s1", client_name="claude-code")
     policy.decide(_catalog(), "hash1", context)
     log.close()
 
-    (record,) = _records(config.log_path)
+    (record,) = _records(log.path)
     assert record["arm"] == "test-arm"
     assert record["decision_point"] == "A"
     assert record["catalog_hash"] == "hash1"
@@ -127,19 +127,19 @@ def test_decision_is_logged_with_propensity_and_context(tmp_path):
 
 def test_decision_point_is_c_when_a_task_is_present(tmp_path):
     config = _config(tmp_path, mode="live")
-    log = ExposureLog(config.log_path)
+    log = ExposureLog(config.log_dir)
     policy = Policy(config, HeadSelector(), StaticTokenCounter({}, default=100), log)
 
     policy.decide(_catalog(), "h", DecisionContext(session_id="s1", task="find the PRs"))
     log.close()
 
-    (record,) = _records(config.log_path)
+    (record,) = _records(log.path)
     assert record["decision_point"] == "C"
 
 
 def test_a_pinned_tool_missing_from_the_catalog_is_skipped_not_fatal(tmp_path):
     config = _config(tmp_path, mode="live", pinned=(("github", "t0"), ("slack", "gone")))
-    log = ExposureLog(config.log_path)
+    log = ExposureLog(config.log_dir)
     policy = Policy(config, HeadSelector(), StaticTokenCounter({}, default=100), log)
 
     exposed = policy.decide(_catalog(), "h", DecisionContext(session_id="s1"))

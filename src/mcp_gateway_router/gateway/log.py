@@ -18,6 +18,7 @@ retrofittable** — their absence cannot be reconstructed from later data:
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,10 +46,33 @@ class ExposureLog:
     crashed or killed session still leaves a readable log.
     """
 
-    def __init__(self, path: Path) -> None:
-        self._path = Path(path)
+    def __init__(self, log_dir: Path, session_id: str | None = None) -> None:
+        """One file per session, inside ``log_dir``.
+
+        Not one shared file: every Claude Code window spawns its own gateway, and all
+        of them would append to it concurrently. A single write is atomic only while
+        it stays small, and live-mode records carrying a full exposed set do not —
+        so concurrent sessions would interleave and corrupt records exactly when the
+        data starts mattering.
+        """
+        # Second-resolution timestamps collide: two Claude Code windows opened in the
+        # same second produced the same id and shared one file, which is the exact
+        # interleaving this per-session split exists to prevent. The random suffix is
+        # what makes it unique; the timestamp is kept only so files sort chronologically.
+        self._session_id = session_id or (
+            f"s-{int(datetime.now(timezone.utc).timestamp())}-{uuid.uuid4().hex[:8]}"
+        )
+        self._path = Path(log_dir) / f"{self._session_id}.jsonl"
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._handle = self._path.open("a", encoding="utf-8")
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
 
     def _write(self, record: dict[str, Any]) -> None:
         self._handle.write(json.dumps(record, sort_keys=True) + "\n")

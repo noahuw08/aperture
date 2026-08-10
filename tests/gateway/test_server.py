@@ -58,11 +58,11 @@ async def _gateway(tmp_path, mode="live", budget=250):
         arm="test-arm",
         budget_tokens=budget,
         pinned=(),
-        log_path=tmp_path / "exposure.jsonl",
+        log_dir=tmp_path,
     )
     pool = UpstreamPool(config.upstreams, session_factory=factory)
     await pool.start()
-    log = ExposureLog(config.log_path)
+    log = ExposureLog(config.log_dir)
     policy = Policy(config, HeadSelector(), StaticTokenCounter({}, default=100), log)
     return Gateway(config, pool, policy, log), sessions, log, config
 
@@ -81,7 +81,7 @@ async def test_shadow_mode_advertises_the_whole_catalog(tmp_path):
     log.close()
 
     assert len(tools) == 4
-    (record,) = _records(config.log_path)
+    (record,) = _records(log.path)
     assert len(record["exposed"]) == 2
 
 
@@ -103,7 +103,7 @@ async def test_calling_an_unexposed_tool_is_logged_as_a_miss(tmp_path):
     await gateway.call_tool("github__d", {})
     log.close()
 
-    calls = [r for r in _records(config.log_path) if r["kind"] == "call"]
+    calls = [r for r in _records(log.path) if r["kind"] == "call"]
     assert calls[0]["was_exposed"] is False
 
 
@@ -114,7 +114,7 @@ async def test_calling_an_exposed_tool_is_logged_as_a_hit(tmp_path):
     await gateway.call_tool("github__a", {})
     log.close()
 
-    calls = [r for r in _records(config.log_path) if r["kind"] == "call"]
+    calls = [r for r in _records(log.path) if r["kind"] == "call"]
     assert calls[0]["was_exposed"] is True
     assert calls[0]["status"] == "ok"
 
