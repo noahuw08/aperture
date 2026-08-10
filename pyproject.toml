@@ -12,6 +12,8 @@ tokens = ["anthropic>=0.116"]
 bench = ["datasets>=2.14", "sentence-transformers>=3.0"]
 # Phase 2 data plane: the MCP protocol itself, client and server side.
 gateway = ["mcp>=2.0", "anyio>=4.0"]
+# Q1: the Agent SDK is the client, which is the only place prefix tokens are visible.
+bench-q1 = ["claude-agent-sdk>=0.2.134"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
 
 [build-system]
