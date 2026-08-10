@@ -34,7 +34,43 @@ lost the thread.
 
 ## Where things stand
 
+> ### ⚡ Updated 2026-08-09 — read this box before the Phase 0 material below
+>
+> **The data plane exists and runs.** 176 tests passing, ~24 commits on
+> `feat/gateway-data-plane`. Three things are built that this file's later sections
+> predate: an **MCP gateway** proxying 95 real tools (github 47 · notion 24 ·
+> playwright 24) over stdio and HTTP; a **Q2 replay harness** that scores any point-A
+> selector against collected sessions offline; and a **Q1 Agent SDK harness** whose
+> gate (Task 0) passes. See [`gateway-setup.md`](gateway-setup.md) and the Notion
+> Decision log for the reasoning.
+>
+> **Four findings that change the argument, newest first:**
+>
+> 1. **Tool search defers MCP schemas at ≈ 0 prefix cost.** Measured with `/context`
+>    on a real 95-tool session: total 10.9k, and MCP tools appear in *no* category —
+>    listed as "loaded on-demand". **The token-tax premise does not hold on this
+>    client at this catalog size**; cutting 95 → 25 saves approximately nothing. The
+>    engine's remaining value (retrieval precision, fewer round trips, fewer wrong-tool
+>    picks) is **invisible to coverage**, which makes Q1 — not Q2 — load-bearing.
+> 2. **Q1 needs no API credit.** The Claude Agent SDK authenticates through the Claude
+>    Code CLI's own credential (verified with `ANTHROPIC_API_KEY` unset). The blocker
+>    on the account balance gates `count_tokens`, not the benchmark.
+> 3. **Real catalog measured: 39× schema-size spread**, median 1,001 chars. Enough that
+>    `fill_budget` is a genuine knapsack rather than a top-K in disguise. Notion is 25%
+>    of tools and 54% of bytes — **cost concentrates by server**, which no earlier doc
+>    said.
+> 4. **`fill_budget` is rank-greedy, not density-greedy.** `algorithm.md` specifies
+>    `p·v/c`; the code does not divide by cost. Identical under the old flat-120
+>    placeholder, divergent at 39×.
+>
+> **The single blocker on everything: collection has not started.** `github` and
+> `playwright` are still registered directly in Claude Code, so real calls bypass the
+> proxy and the log stays empty. Q2 replays that log; Q1's task battery is authored
+> from it. See *Blocked on you* below.
+
 **Phase 0 (falsification harness). Three of four gate blockers cleared. 61 tests passing.**
+_(Historical — superseded by the box above. The frontier numbers below are still the
+best offline reading, but they assume a flat 120 tokens per tool.)_
 
 The harness runs on real data — ToolRet, 37,292 tools, 101 `apibank` queries (50 fit / 51
 eval). It produces a frontier chart, a stage-by-stage notebook, and a calibration report.
@@ -151,7 +187,39 @@ habit rather than a task, and for more than one calibration point.
 > **Standing check: ask of every new evaluation — what result would make this fail?**
 > If there isn't one, it isn't an evaluation.
 
-## Blocked on you (the human)
+## Blocked on you (the human) — 2026-08-09
+
+**1. Start collection. Nothing downstream moves until this happens.** Three registrations
+have to go so calls stop bypassing the proxy, and one has to replace them:
+
+```sh
+claude mcp remove -s user notion
+cd /Users/nguyenvietkhoi && claude mcp remove github && claude mcp remove playwright
+claude mcp add -s user gateway -- /Users/nguyenvietkhoi/mcp-gateway-router/bin/mcp-gateway
+claude mcp list      # expect exactly: gateway
+```
+
+Then work normally. Shadow mode passes all 95 tools through unchanged; each session writes
+`runs/{session_id}.jsonl` with project / repo / branch / hour and every call.
+⚠️ **`claude mcp list` is the check that matters** — a directory that inherits a parent
+project's registrations is not isolated, and that already spoiled one round of sessions.
+
+**2. Pick three numbers.** The Gate 0 margin, the Q2 margin, and the collection stopping
+rule. None block collection; all block *reading* it. Without a stopping rule, collection
+runs until the number looks good — a movable margin wearing a different hat.
+
+**3. The capture-rate probe** (`gateway.probe.json`, cuts to 4 tools). Does Claude Code
+forward a call to an *unexposed* tool, or filter it client-side? The gateway side is
+verified; what is untested is whether the client ever emits one. If it filters, the
+missing-demand signal has no channel here. **Only valid once the direct registrations are
+gone** — otherwise the client just uses the other route and you read a false negative.
+
+**4. Anthropic account credit** — still zero, still gates `count_tokens`. It does *not*
+gate Q1 (see the box at the top).
+
+---
+
+## Blocked on you — earlier (historical)
 
 1. **Anthropic credentials.** `ANTHROPIC_API_KEY` is unset and the `ant` CLI isn't
    installed, so `--count-tokens` has never run. Costs are flat at 120/tool against a
@@ -175,7 +243,44 @@ habit rather than a task, and for more than one calibration point.
    needs a full-page rewrite that would destroy a live comment thread on the *"current
    prompt, semantically matched"* bullet. Recommendation has been: drag manually.
 
-## Gotchas that will waste your time
+## Gotchas that will waste your time — added 2026-08-09
+
+- **`mcp` is 2.x, not 1.x.** The `@server.list_tools()` decorators are gone; `MCPServer`
+  is the high-level replacement and its handlers dispatch to `self.list_tools()` /
+  `self.call_tool()`, so subclassing is how you serve a runtime-varying tool list.
+  `inputSchema` is now `input_schema`.
+- **An MCP session must be owned by one task.** `stdio_client`, `streamable_http_client`
+  and `ClientSession` each open an anyio task group, and anyio requires a cancel scope to
+  be exited by the entering task. An `AsyncExitStack` entered in `start()` and unwound in
+  `aclose()` raises *"Attempted to exit cancel scope in a different task"*. `runner.py`
+  parks the contexts in a dedicated task for their whole lifetime.
+- **`claude-agent-sdk` cannot be a pyproject extra.** It pins an older `mcp` than the
+  gateway needs. They coexist at runtime but uv's universal resolver rejects the pair and
+  breaks `uv run pytest` entirely. Pass `--with claude-agent-sdk` per invocation.
+- **Tool search is a client `ToolUseBlock` named `ToolSearch`** — *not* a
+  `ServerToolUseBlock`. The SDK's server-tool enum lists `tool_search_tool_regex`/`_bm25`,
+  a different API-side mechanism. Instrumenting the enum counts zero searches.
+- **The client's working directory is not `os.getcwd()`.** The launcher runs
+  `uv --directory`, so cwd is the gateway's own repo; and `$PWD` fails too because the
+  launcher is bash and **bash overwrites `PWD` with its inherited cwd at startup**. The
+  shim exports `MCP_GATEWAY_CLIENT_CWD` before anything can change it.
+- **`git rev-parse --abbrev-ref HEAD` fails on a repo with no commits.** Use
+  `git branch --show-current`.
+- **Second-resolution session ids collide.** Two Claude Code windows opened in the same
+  second shared an id — and a log file. Ids carry a uuid suffix now.
+- **Notion API — `update_content` injection depth.** Leading tabs on the *first* line of
+  `new_str` make the whole edit a **silent no-op** (success response, nothing changes).
+  Without them, injected blocks land at `anchor_depth − 1 + tabs`, so a depth-2 anchor
+  cannot produce a depth-1 sibling — which is why every new snapshot lands inside the
+  intro callout and needs one manual drag. For an *existing* block, tabs set absolute
+  depth, so re-matching its text with a `\t` prefix repairs nesting. Raw `<table>` markup
+  in injected content silently kills the entire edit. `insert_content` with
+  `position: end` nests correctly and is the safe path for new top-level sections.
+- **A Claude Pro subscription does not fund the Anthropic API.** Separate products,
+  separate billing. A zero balance gates *every* endpoint including the free
+  `count_tokens`.
+
+## Gotchas that will waste your time — earlier
 
 - **Notion API is append-only.** `insert_content` takes start/end only. Headings can't be
   matched by `update_content` — **but heading *text* can** (without the `#` and emoji).
@@ -295,4 +400,25 @@ New since the Notion *🧫 Getting the data* section (2026-08-07), not yet start
 Runs added 2026-08-07: `frontier_pdk.json` (k sweep), `frontier_inst.json` (leakage upper
 bound), `calibration_bm25.json`, `calibration_bm25_noinst.json`, `calibration_e5base.json`.
 
-**Nothing is committed.** The entire repo is untracked.
+**Committed.** ~24 commits on `feat/gateway-data-plane`; `main` holds the Phase 0 baseline.
+
+## File map — added 2026-08-09
+
+| Path | What |
+|---|---|
+| `gateway/config.py` | upstreams, modes, `${VAR}` + `.env` expansion, `log_dir` |
+| `gateway/runner.py` | session lifetime; the anyio task-pinning fix both transports share |
+| `gateway/stdio_session.py` · `http_session.py` | the two transports |
+| `gateway/upstream.py` | pool, aggregation, routing; one dead server degrades the catalog |
+| `gateway/policy.py` | shadow mode, fail-open, `mode` + `n_advertised` on every record |
+| `gateway/server.py` | `Gateway`, `build_app` (mcp 2.x), `serve`, `build_counter` |
+| `gateway/environment.py` | point-A context capture (project/repo/branch/hour) |
+| `gateway/log.py` | append-only JSONL, one file per session |
+| `harvest.py` | catalog service + `count_tokens`; writes `results/catalog.json` |
+| `replay/sessions.py` | log → `SessionRecord`; reads a directory or a file |
+| `replay/harness.py` | temporal replay; history passed at selector construction |
+| `replay/baselines.py` | `random` (null), `d-global`, `d-recent`, per-session oracle |
+| `replay/run.py` | CLI; `--engine module:factory` plugs in your own |
+| `bench/runner.py` | one arm × one task through the Agent SDK |
+| `bench/task0.py` | the Q1 gate — run it before building anything in `bench/` |
+| `bin/mcp-gateway` | launcher shim; captures the client cwd before anything changes it |
