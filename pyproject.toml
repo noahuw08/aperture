@@ -12,8 +12,11 @@ tokens = ["anthropic>=0.116"]
 bench = ["datasets>=2.14", "sentence-transformers>=3.0"]
 # Phase 2 data plane: the MCP protocol itself, client and server side.
 gateway = ["mcp>=2.0", "anyio>=4.0"]
-# Q1: the Agent SDK is the client, which is the only place prefix tokens are visible.
-bench-q1 = ["claude-agent-sdk>=0.2.134"]
+# NOTE: Q1's harness needs `claude-agent-sdk`, which is deliberately NOT an extra here.
+# It pins an older `mcp` than the gateway requires, and while the two coexist fine at
+# runtime, uv's universal resolver rejects the combination. Supply it per-invocation:
+#   env -u ANTHROPIC_API_KEY uv run --with claude-agent-sdk --extra gateway \
+#       python -m mcp_gateway_router.bench.task0
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
 
 [build-system]
