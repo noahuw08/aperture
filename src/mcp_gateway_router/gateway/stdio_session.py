@@ -23,6 +23,16 @@ class StdioUpstreamSession(RunnerSession):
         self._spec = spec
 
     def _transport(self) -> AbstractAsyncContextManager[Any]:
+        # ⚠️ `env=None` is NOT "inherit the environment". The MCP SDK substitutes a
+        # sanitised default carrying only HOME / LOGNAME / PATH / SHELL / TERM / USER,
+        # so anything else is silently dropped.
+        #
+        # That default is the right behaviour for upstreams — playwright has no business
+        # seeing NOTION_TOKEN — so a spec declares exactly what it needs and gets that
+        # plus the parent environment. But it means launching *the gateway itself* through
+        # this class requires putting MCP_GATEWAY_CONFIG / MCP_GATEWAY_TASK in `spec.env`;
+        # exporting them in the parent shell is not enough and fails silently, serving the
+        # default config as though nothing were wrong.
         params = StdioServerParameters(
             command=self._spec.command,
             args=list(self._spec.args),

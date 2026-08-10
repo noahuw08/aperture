@@ -76,7 +76,12 @@ async def run_arm(
     """
     from claude_agent_sdk import ClaudeAgentOptions, query
 
-    env = {"MCP_GATEWAY_CONFIG": gateway_config} if gateway_config else {}
+    # The prompt is handed to the gateway explicitly. At tools/list the MCP protocol
+    # supplies none, so an arm only reaches decision point C because the harness put it
+    # there — which is what makes A-vs-C a comparison rather than a category error.
+    env: dict[str, str] = {"MCP_GATEWAY_TASK": prompt}
+    if gateway_config:
+        env["MCP_GATEWAY_CONFIG"] = gateway_config
 
     options = ClaudeAgentOptions(
         model=model,

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from .environment import safe_capture_environment
 from .log import ExposureLog
 from .naming import advertised_name, parse_advertised
 from .policy import Policy
+from .selectors import build_selector
 from .upstream import UpstreamPool
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,10 @@ class Gateway:
             client_name="claude-code",
             tools_called=tuple(self._called),
             environment=self._environment,
+            # Injected by the Q1 harness. The MCP protocol supplies no prompt at
+            # tools/list, so a task here means a benchmark deliberately handed us one —
+            # which is exactly how an arm becomes decision point C instead of A.
+            task=os.environ.get("MCP_GATEWAY_TASK") or None,
         )
 
     async def list_tools(self) -> list[Tool]:
@@ -159,8 +165,6 @@ def build_counter(config: GatewayConfig):
 
 
 async def serve(config_path: Path) -> None:
-    from ..baselines import StaticSet
-
     config = GatewayConfig.from_file(config_path)
     pool = UpstreamPool(config.upstreams)
     await pool.start()
@@ -168,7 +172,7 @@ async def serve(config_path: Path) -> None:
     log = ExposureLog(config.log_dir)
     counter = build_counter(config)
 
-    selector = StaticSet(config.pinned)
+    selector = build_selector(config.selector, config.pinned)
     policy = Policy(config, selector, counter, log)
     gateway = Gateway(config, pool, policy, log)
     app = build_app(gateway)

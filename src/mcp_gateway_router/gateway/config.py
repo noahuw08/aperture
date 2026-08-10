@@ -102,6 +102,9 @@ class GatewayConfig:
     # grow past a single atomic write, which live mode makes routine.
     log_dir: Path
     model: str = "claude-opus-5"
+    #: Which selector to run. "static-set" (pinned only), "semantic" (arm C), or
+    #: "stable-order". Unknown names raise at build time rather than falling back.
+    selector: str = "static-set"
     # Harvested catalog with measured per-schema token costs. Produced by
     # ``harvest.py`` (control plane) and read by the gateway (data plane), so that
     # answering tools/list never requires a network call to measure costs.
@@ -177,5 +180,6 @@ class GatewayConfig:
             pinned=tuple(tuple(p) for p in payload.get("pinned", [])),
             log_dir=log_dir,
             model=payload.get("model", "claude-opus-5"),
+            selector=payload.get("selector", "static-set"),
             catalog_path=catalog_path,
         )
