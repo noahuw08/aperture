@@ -5,7 +5,10 @@ inbound brief and is still the best statement of the background argument._
 
 ## Read this first, in this order
 
-1. **This file** — where things stand and what will waste your time.
+0. **[`PICKUP.md`](PICKUP.md) — START HERE.** State of play as of 2026-08-10: what is
+   built, what the findings changed, what is blocked, and one open contradiction that
+   should be resolved before building further.
+1. **This file** — standing background, and the gotcha list that will save you a day.
 2. [`roadmap.md`](roadmap.md) — the destination, Phase 0 → GA, every gate with a failure
    branch. Read backwards from GA.
 3. [`decisions.md`](decisions.md) — newest first. **Read at least the top five entries.**
