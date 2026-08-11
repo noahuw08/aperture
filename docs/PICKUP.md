@@ -3,7 +3,7 @@
 _Written at the end of a long session, for whoever continues it. Read this, then
 [`session-handoff.md`](session-handoff.md) for the standing background and the gotcha list._
 
-**Branch** `feat/gateway-data-plane` · **34 commits** · **206 tests passing** · `main` holds
+**Branch** `feat/gateway-data-plane` · **35 commits** · **213 tests passing** · `main` holds
 the Phase 0 baseline only. Nothing is merged yet.
 
 ---
@@ -52,7 +52,8 @@ Recorded in the Notion decision log (newest first) and in `gateway-setup.md`.
 
 **a. Tool search defers MCP schemas, so the token-tax premise is weak at this catalog
 size.** The project was founded on schemas being a recurring per-call tax. Deferral means
-cutting 95 → 25 saves far less than assumed. ⚠️ **See §6 — this claim needs re-measuring.**
+cutting 95 → 25 saves far less than assumed. ✅ **Re-measured and confirmed — §6.** The
+cut is worth **~310 tokens**; loaded-vs-deferred is a **35×** spread.
 
 **b. Capture rate is NEGATIVE.** With a tool deliberately withheld, the agent ran
 `ToolSearch`, saw it was unavailable, completed via `Bash`, and said so. **Zero call
@@ -97,7 +98,7 @@ divergent at 39×. **Unfixed.**
 **On code (unblocked, no dependencies):**
 
 3. Fix `fill_budget` to density-greedy, and measure the gap against rank-greedy.
-4. Re-measure the deferred-tool prefix cost — see §6.
+4. ~~Re-measure the deferred-tool prefix cost~~ — done, §6.
 
 ---
 
@@ -135,19 +136,29 @@ def my_factory(history):            # Sequence[SessionRecord]
 
 ---
 
-## 6 · ⚠️ Open contradiction to resolve first
+## 6 · ✅ The contradiction is resolved — finding (a) holds
 
-`/context` in **this** session reported `MCP tools: 6.4k` loaded **plus 34.3k deferred**.
-An earlier `/context` in a 95-tool gateway session showed MCP tools in *no* token category
-at all, which is what finding (a) rests on.
+_Closed 2026-08-10. Full writeup in `gateway-setup.md` § *Probe results* 4._
 
-**Those cannot both be right.** Either the display changed, or deferred tools do carry a
-real prefix cost (~34k here) and the "≈0" claim is wrong.
+The two `/context` readings were measuring different things. **34.3k is the schema mass
+held back, not a charge against the prefix.** What deferral actually costs is the name
+list: 95 tools = 3,858 chars ≈ **420 tokens**, against 135,514 chars ≈ 34-39k if loaded.
+A **35× spread**.
 
-This matters a lot: if deferral costs ~34k, the token argument is **not** dead, cutting the
-catalog *does* save real tokens, and Gate 0's framing shifts back toward cost. Re-measure
-before building on finding (a) — a clean test is `/context` in a gateway session at 95
-tools versus a live-mode session at ~10, reading the deferred line in both.
+The probe already contained the independent check: **dropping 91 of 95 tools moved the
+prefix by 405 tokens**, and the full 95-tool prefix (31,893) is smaller than the schema
+mass alone. The schemas were never in the prefix.
+
+So cutting 95 → 25 saves **~310 tokens**. There is no token argument for cutting at this
+catalog size, Gate 0 stays framed on selection quality, and §3(a) needs no revision.
+
+```sh
+uv run python -m mcp_gateway_router.deferral --catalog results/catalog.json
+```
+
+⚠️ `count_tokens` is still blocked (zero balance), so the *loaded* absolutes are
+chars/token estimates. The 35× ratio is exact and the deferred side is probe-anchored, so
+the conclusion doesn't move — but re-run once funded.
 
 ---
 

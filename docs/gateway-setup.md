@@ -109,6 +109,41 @@ This is n=1 on a deliberately bad cut (4 pinned tools unrelated to the task), so
 Gate 0 reading. It is the direction arm C has to overcome, and the prefix column is the
 reason it cannot overcome it on cost.
 
+### 4 · What deferral costs — the `/context` contradiction, resolved
+
+An earlier handoff flagged an apparent contradiction: one `/context` reading showed MCP
+tools in **no** token category, another showed **34.3k deferred**. Reproduce the accounting
+with:
+
+```sh
+uv run python -m mcp_gateway_router.deferral --catalog results/catalog.json
+```
+
+| | 95 tools | as tokens |
+|---|---|---|
+| full definitions (name + description + schema) | 135,514 chars | ~34-39k *(est.)* |
+| deferred names only | 3,858 chars | **~420** *(measured)* |
+| | | **35× spread** |
+
+**Both readings were right, and they are not measuring the same thing.** The 34.3k figure
+is the schema mass *held back* — what you would pay if those tools were loaded — not a
+charge against the prefix. What deferral actually puts in the prefix is the name list.
+
+Row 3 of the probe above is the independent check, and it settles it: **dropping 91 of 95
+tools moved the prefix by 405 tokens.** Had schemas been in the prefix, that cut would have
+returned ~30k. It did not, and the 95-tool prefix (31,893) is smaller than the schema mass
+alone would be. The schemas were never there.
+
+**Consequences.** Finding (a) survives and is now quantified rather than asserted: cutting
+95 → 25 saves **~310 tokens**, so there is no token argument for cutting at this catalog
+size. Gate 0's framing stays on selection quality — searches, turns, wrong picks — and not
+on cost. Note also that per-name cost is **~4.5 tokens**, roughly half what a chars/token
+estimate predicts, because every name repeats the `mcp__gateway__<server>__` run.
+
+⚠️ **Caveat.** `count_tokens` is still blocked by the zero account balance, so the
+*loaded* column is a chars/token estimate. The 35× ratio is exact — the constant cancels —
+and the deferred column is anchored on the probe's measured 405. Re-run once funded.
+
 ## Routing rule — one path per tool
 
 **A tool must be reachable by exactly one route.** If it is registered directly in the

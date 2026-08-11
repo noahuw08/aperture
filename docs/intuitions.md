@@ -47,6 +47,38 @@ vendor's, and it scales with catalog size rather than with usage. Exposing all 3
 in our ToolRet catalog costs **4,475,040 tokens**. The oracle — exactly the tools actually
 needed — costs **193**. That ratio is the entire business.
 
+> ⚠️ **This is the premise the project was founded on, and on a tool-search client it is
+> false.** Read the next entry before using any number above. The first sentence — schemas
+> don't get fetched when needed — is exactly what deferral undoes.
+
+### Deferral, a.k.a. tool search
+
+**Plain version.** The client doesn't paste every schema into the prefix any more. It
+pastes the tool *names*, plus one `ToolSearch` tool. When the agent needs something, it
+searches, and only then does that tool's full schema enter the context.
+
+**Concrete.** Our 95 gateway tools are **135,514 characters** as full definitions and
+**3,858 characters** as bare names — a **35× spread**. Measured against the probe, the
+whole 95-tool name list costs roughly **420 tokens** of prefix. Cutting the catalog
+95 → 25 therefore saves about **310 tokens**, not the ~30,000 the entry above implies.
+
+**Why it bites.** The tax stops scaling with catalog size and starts scaling with *usage* —
+you pay for the tools the agent actually fetches. Three consequences, in order of how much
+they cost us:
+
+1. **Cutting the catalog to save tokens no longer works.** That was pillar one, and it's
+   gone at this catalog size.
+2. **A bad cut costs more than no cut.** Withhold the right tool and the agent searches
+   again, burning turns and eventually loading the schema anyway. Measured: 4 tools took
+   more `ToolSearch` calls and more turns than 95, at the same prefix cost.
+3. **What survives is timing and quality.** Tool search can't run before a prompt exists
+   (decision point A), and a selector that puts the right tool in front of the agent saves
+   searches. Both are measured by task success, not by token count.
+
+**The one number to keep.** 35× is a ratio, so it doesn't depend on a tokenizer and is
+exact. Every absolute in this file is an estimate until `count_tokens` is funded — see
+`deferral.py`.
+
 ### Harvest
 
 **Plain version.** Connect to every MCP server we have, ask each one for its tool list, and

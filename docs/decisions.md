@@ -9,6 +9,35 @@ in [`plan.md`](plan.md).
 
 ---
 
+## 2026-08-10 — Deferral costs names, not schemas; the token pillar is retired
+
+**Decision:** stop treating prefix tokens as a Gate 0 outcome. Cutting the catalog is
+worth ~310 tokens on this client, which is not a benchmark-able quantity. Gate 0 is read
+on selection quality — `ToolSearch` calls, turns, wrong picks — and the token column stays
+in the results only as a check that no arm is secretly paying more.
+
+**What was contradictory.** One `/context` showed MCP tools in no token category; another
+showed `34.3k deferred`. The handoff treated these as mutually exclusive and blocked on
+resolving them, because if deferral really cost 34k the whole token argument came back.
+
+**They measure different things.** 34.3k is the schema mass held back — a counterfactual,
+not a charge. Deferral puts only the name list in the prefix: 95 tools is 3,858 chars of
+names against 135,514 chars of full definitions, a **35× spread**.
+
+**Settled by data already collected.** The 2026-08-10 probe cut 95 tools to 4 and the
+prefix moved **405 tokens**. Loaded schemas would have returned ~30k, and the 95-tool
+prefix (31,893) is smaller than the schema mass alone. Accounting is reproducible via
+`mcp_gateway_router.deferral`; per-name cost is ~4.5 tokens, about half what chars/token
+predicts, because names share the `mcp__gateway__<server>__` run.
+
+**Rejected — re-run `/context` by hand in two sessions.** That was the handoff's proposed
+test. It needs an interactive client, isn't scriptable, and the probe's per-run token
+accounting already answers it with numbers that are in the repo.
+
+**Standing caveat.** `count_tokens` is still gated by the zero balance, so the *loaded*
+absolutes are estimates. The 35× ratio is exact (the chars/token constant cancels) and the
+deferred side is anchored on the measured 405, so no conclusion here rests on the estimate.
+
 ## 2026-08-07 — Blockers 1, 2 and 4 cleared; first interpretable frontier
 
 **Blocker 1 — progressive disclosure can now lose.** `find_tools` runs the same retriever
