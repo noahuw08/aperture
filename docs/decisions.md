@@ -9,6 +9,60 @@ in [`plan.md`](plan.md).
 
 ---
 
+## 2026-08-11 — Ranked replay baselines fill the budget; the null control was winning on a technicality
+
+**Decision:** `_Ranked` in `replay/baselines.py` appends the catalog tools absent from its
+ranking, in catalog order, after the ranked prefix. Rank order under test is unchanged —
+the tail only spends budget that was previously thrown away. Affects `d-global`,
+`d-recent` and `oracle`; `random` already filled the budget by construction.
+
+**The symptom.** Every budget in the Q2 sweep scored `d-global` and `d-recent` at exactly
+**0.000** while `random` reached **1.000** at 5,000 tokens. An informed baseline losing
+to the null control at every budget reads as a broken harness, which is what prompted the
+check.
+
+**Root cause — two causes, not one.** Instrumenting `n_exposed` separated them:
+
+| budget | d-global exposed | random exposed |
+|---|---|---|
+| 500 | 0 / 2 | 5 |
+| 3,000 | 0 / 2 | 30 |
+| 10,000 | 0 / 2 | 95 |
+
+A ranking can only name tools that history has *seen*. With one prior session the ranking
+held two tools, so `d-global` exposed **two tools against a 10,000-token budget** — 98%
+unspent — while `random` exposed all 95. That is not a ranking result; it is a short
+history scoring as if it were one. The first scored session is worse still: its history
+had zero calls, so the ranking was empty and it exposed **nothing at all**.
+
+**Why the tests missed it.** Every baseline test used a budget of 100–200 tokens — one or
+two tools — where a ranked prefix and a filled budget are the same set. The gap only opens
+when the budget exceeds what history has named, which is the normal case early in
+collection. `test_a_ranked_baseline_spends_the_whole_budget` now pins it.
+
+**Rejected — leave it and read only tight budgets.** The unspent budget is not a property
+of the selector being measured; a deployed gateway with budget left over would obviously
+expose more. Restricting the readable region to hide a harness artefact discards most of
+the sweep to avoid a six-line fix.
+
+**Rejected — order the tail by cost, cheapest first.** It would maximise tool count and
+therefore coverage, but it invents a second selection policy inside the null tail and
+would flatter every ranked arm by an amount that has nothing to do with its ranking.
+Catalog order is arbitrary but neutral.
+
+**What moved** (real 95-tool catalog, the 2 currently scored sessions):
+
+| budget | 500 | 1,000 | 2,000 | 3,000 | 5,000 | 10,000 |
+|---|---|---|---|---|---|---|
+| d-global, before | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| d-global, after | 0.000 | 0.000 | 0.250 | 0.250 | 0.500 | 1.000 |
+
+**This does not rescue the current reading.** n=2 scored sessions, and the two call
+disjoint tool sets, so `random` still leads at 5,000. That residue is luck at n=2, not
+structure — the harness's own guard already says differences below ~20 points are not
+readable here. The fix removes an artefact that would have persisted, shrinking but never
+vanishing, through an entire collection run.
+
 ## 2026-08-11 — Density-greedy is opt-in, because the value term does not exist yet
 
 **Decision:** `fill_budget` gains an optional `scores` argument. With it, tools are

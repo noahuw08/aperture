@@ -28,7 +28,16 @@ from .sessions import SessionRecord, ToolKey
 
 
 class _Ranked:
-    """Exposes tools in a fixed rank order, filling the budget."""
+    """Exposes tools in a fixed rank order, then fills any leftover budget.
+
+    The tail matters. A ranking can only name tools that history has already seen, so
+    early on it is far shorter than the budget — and exposing only the ranked prefix
+    strands the rest. That scores as poor ranking when it is really just a short
+    history, and it hands ``random_selector`` a structural win: the null control fills
+    every slot while an informed baseline fills two. Ranked tools still come first, so
+    the ordering under test is unchanged; the tail only spends budget that would
+    otherwise be thrown away.
+    """
 
     def __init__(self, name: str, ranking: list[ToolKey]) -> None:
         self.name = name
@@ -41,8 +50,10 @@ class _Ranked:
         budget: int,
         counter: TokenCounter,
     ) -> list[Tool]:
-        ranked = [catalog.get(*key) for key in self._ranking]
-        return fill_budget([t for t in ranked if t is not None], budget, counter)
+        ranked = [t for t in (catalog.get(*key) for key in self._ranking) if t is not None]
+        seen = {t.key for t in ranked}
+        tail = [t for t in catalog if t.key not in seen]
+        return fill_budget(ranked + tail, budget, counter)
 
 
 def global_frequency(history: Sequence[SessionRecord]):

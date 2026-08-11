@@ -76,6 +76,21 @@ def test_the_oracle_is_still_bounded_by_the_budget():
     assert result.mean_coverage == 0.5
 
 
+def test_a_ranked_baseline_spends_the_whole_budget():
+    """History shorter than the budget must not leave the budget unspent.
+
+    A ranking only covers tools that history has seen. Exposing just those strands
+    the rest of the budget, which hands the null control a structural win it did not
+    earn — random fills 95 slots while d-global fills two.
+    """
+    sessions = [_session(0, ["t0"]), _session(1, ["t0"])]
+
+    budget = 500  # 5 tools of 8, at the flat 100/tool of COUNTER
+    result = replay(sessions, global_frequency, _catalog(), budget, COUNTER)
+
+    assert [s.n_exposed for s in result.per_session] == [5, 5]
+
+
 def test_baselines_survive_an_empty_history():
     """Session zero has nothing to learn from; it must score, not crash."""
     sessions = [_session(0, ["t0"])]
