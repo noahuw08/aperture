@@ -16,12 +16,16 @@ that frontier is worth having rather than a single task count.
 
 from __future__ import annotations
 
+import argparse
+import json
 import math
 import statistics
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Sequence
 
-from .matrix import ArmSummary
+from .matrix import ArmSummary, Cell
+from .runner import ArmResult
 
 #: Two-sided, ~80% power. Same constant as ``matrix.minimum_detectable_effect``; the
 #: two must agree or the sizing and the readout are calibrated differently.
@@ -152,3 +156,90 @@ def size_battery(
             )
         )
     return rows
+
+
+def _cell(arm: str, task_id: str, passes: int, reps: int) -> Cell:
+    """Rebuild a Cell from a pass count.
+
+    Only ``passed`` is recoverable from a pilot file and only ``passed`` is read by
+    ``success_rate``; the rest of ArmResult is filled with zeros rather than invented.
+    """
+    runs = []
+    for i in range(reps):
+        result = ArmResult(
+            arm=arm, task_id=task_id, ok=True, answer=None, turns=0, cost_usd=0.0,
+            input_tokens=0, cache_creation_tokens=0, cache_read_tokens=0,
+            output_tokens=0, tool_search_calls=0,
+        )
+        result.passed = i < passes
+        runs.append(result)
+    return Cell(arm=arm, task_id=task_id, runs=runs)
+
+
+def load_pilot(path: Path) -> tuple[ArmSummary, ArmSummary, int]:
+    """Read a pilot file written by the arms walkthrough.
+
+    Rejects the pre-2026-08-11 rate-only format outright. Assuming a repetition count
+    for it would produce a confident number from data that cannot support one.
+    """
+    payload = json.loads(Path(path).read_text())
+    reps = payload.get("reps")
+    if not isinstance(reps, int) or reps < 1:
+        raise ValueError(
+            f"{path} has no usable 'reps' — it is probably the older rate-only "
+            "format, which cannot support sizing. Re-run the pilot."
+        )
+
+    arms = payload.get("arms") or {}
+    if len(arms) < 2:
+        raise ValueError(f"{path} needs at least two arms to compare, found {len(arms)}")
+
+    summaries = [
+        ArmSummary(
+            arm=name,
+            cells=[_cell(name, c["task_id"], int(c["passes"]), reps) for c in body["cells"]],
+        )
+        for name, body in list(arms.items())[:2]
+    ]
+    return summaries[0], summaries[1], reps
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--from", dest="source", type=Path, required=True,
+                        help="pilot results JSON")
+    parser.add_argument("--margin", type=float, default=0.15)
+    parser.add_argument("--arms", type=int, default=2)
+    parser.add_argument("--reps", type=int, nargs="+", default=[3, 5, 8, 12, 20])
+    args = parser.parse_args()
+
+    try:
+        left, right, reps = load_pilot(args.source)
+    except ValueError as exc:
+        # A stale or malformed pilot file is ordinary operator error, not a bug.
+        # A traceback here would bury the one line that says what to do about it.
+        raise SystemExit(str(exc))
+
+    est = decompose(left, right, reps)
+
+    print(f"pilot: {est.pilot_tasks} tasks x {est.pilot_reps} reps "
+          f"({left.arm} vs {right.arm})")
+    print(f"  between-task b^2 = {est.between:.4f}")
+    print(f"  within-task  w   = {est.within:.4f}")
+    print(f"  saturated tasks  = {est.saturated_tasks}")
+    if not est.trustworthy:
+        print("\n⚠️  estimate is NOT trustworthy — too few tasks, or most are")
+        print("   saturated at 0/1. Add middling-difficulty pilot tasks before")
+        print("   sizing anything off these numbers.")
+
+    print(f"\nfloor: {est.floor_tasks(args.margin)} tasks — no repetition count "
+          f"reaches {args.margin:.0%} below this\n")
+    print(f"{'reps':>6}{'tasks':>8}{'runs/arm':>10}{'total':>8}{'est $':>9}")
+    print("-" * 41)
+    for row in size_battery(est, margin=args.margin, reps=args.reps, arms=args.arms):
+        print(f"{row.reps:>6}{row.tasks:>8}{row.runs_per_arm:>10}"
+              f"{row.total_runs:>8}{row.est_cost_usd:>9.2f}")
+
+
+if __name__ == "__main__":
+    main()

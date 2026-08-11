@@ -207,18 +207,33 @@ arms = [
 ]
 
 if RERUN:
-    res = await run_matrix(arms=arms, tasks=tasks, repetitions=2, max_budget_usd=0.60)
+    REPETITIONS = 5
+    res = await run_matrix(arms=arms, tasks=tasks, repetitions=REPETITIONS, max_budget_usd=0.60)
     CACHE.parent.mkdir(parents=True, exist_ok=True)
     CACHE.write_text(json.dumps({
-        name: {
-            "success": s.success, "prefix": s.prefix_tokens, "turns": s.turns,
-            "searches": s.tool_searches, "cost": s.cost_usd,
-            "cells": [{"task_id": c.task_id, "rate": c.success_rate} for c in s.cells],
-        } for name, s in res.items()
+        "reps": REPETITIONS,
+        "arms": {
+            name: {
+                "success": s.success, "prefix": s.prefix_tokens, "turns": s.turns,
+                "searches": s.tool_searches, "cost": s.cost_usd,
+                # `passes` alongside `rate`: sizing needs p AND r, and rate alone
+                # loses r. See docs/superpowers/specs/2026-08-11-gate0-battery-sizing-design.md
+                "cells": [
+                    {
+                        "task_id": c.task_id,
+                        "rate": c.success_rate,
+                        "passes": sum(1 for r in c.runs if r.passed),
+                    }
+                    for c in s.cells
+                ],
+            } for name, s in res.items()
+        },
     }, indent=2))
-    summary = json.loads(CACHE.read_text())
+    summary = json.loads(CACHE.read_text())["arms"]
 else:
     summary = json.loads(CACHE.read_text())
+    if "arms" in summary:
+        summary = summary["arms"]
     print("(cached results — set RERUN = True to re-measure)\\n")
 
 print(f"{'arm':<16}{'success':>9}{'prefix':>10}{'turns':>8}{'searches':>10}{'cost $':>9}")

@@ -172,3 +172,61 @@ def test_a_nonpositive_margin_is_rejected():
 
     with pytest.raises(ValueError):
         size_battery(est, margin=0.0)
+
+
+import json
+from pathlib import Path
+
+from mcp_gateway_router.bench.power import load_pilot
+
+
+def _write_pilot(tmp_path: Path, reps: int) -> Path:
+    path = tmp_path / "pilot.json"
+    path.write_text(
+        json.dumps(
+            {
+                "reps": reps,
+                "arms": {
+                    "A-toolsearch": {
+                        "cells": [
+                            {"task_id": "t1", "passes": 3},
+                            {"task_id": "t2", "passes": 1},
+                        ]
+                    },
+                    "C-semantic": {
+                        "cells": [
+                            {"task_id": "t1", "passes": 1},
+                            {"task_id": "t2", "passes": 4},
+                        ]
+                    },
+                },
+            }
+        )
+    )
+    return path
+
+
+def test_load_pilot_reconstructs_rates_and_reps(tmp_path):
+    path = _write_pilot(tmp_path, reps=5)
+
+    left, right, reps = load_pilot(path)
+
+    assert reps == 5
+    assert {c.task_id: c.success_rate for c in left.cells} == {"t1": 0.6, "t2": 0.2}
+    assert {c.task_id: c.success_rate for c in right.cells} == {"t1": 0.2, "t2": 0.8}
+
+
+def test_a_legacy_rate_only_file_is_rejected(tmp_path):
+    """The old format cannot support sizing, and must say so rather than guess."""
+    path = tmp_path / "old.json"
+    path.write_text(
+        json.dumps(
+            {
+                "A-toolsearch": {"cells": [{"task_id": "t1", "rate": 0.0}]},
+                "C-semantic": {"cells": [{"task_id": "t1", "rate": 1.0}]},
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="reps"):
+        load_pilot(path)
