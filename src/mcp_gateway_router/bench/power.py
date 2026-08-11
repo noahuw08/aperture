@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 import statistics
 from dataclasses import dataclass
+from typing import Sequence
 
 from .matrix import ArmSummary
 
@@ -103,3 +104,51 @@ def decompose(left: ArmSummary, right: ArmSummary, reps: int) -> VarianceEstimat
         pilot_reps=reps,
         saturated_tasks=saturated,
     )
+
+
+@dataclass(frozen=True)
+class SizingRow:
+    """One point on the (tasks, reps) frontier, all reaching the same margin."""
+
+    reps: int
+    tasks: int
+    runs_per_arm: int
+    total_runs: int
+    est_cost_usd: float
+
+
+def size_battery(
+    est: VarianceEstimate,
+    margin: float = 0.15,
+    reps: Sequence[int] = (3, 5, 8, 12, 20),
+    arms: int = 2,
+    cost_per_run: float = 0.07,
+) -> list[SizingRow]:
+    """Tasks required at each repetition count, all reaching ``margin``.
+
+    Every row resolves the same difference. They differ only in how the work is
+    split between authoring tasks (expensive, human) and running repetitions
+    (cheap, mechanical) — which is the trade this benchmark actually faces.
+    """
+    if margin <= 0:
+        raise ValueError("margin must be positive")
+
+    rows: list[SizingRow] = []
+    for r in reps:
+        if r < 1:
+            raise ValueError("reps must be at least 1")
+        needed = Z**2 * (est.between + est.within / r) / margin**2
+        # Two is the floor: a paired comparison over one task has no spread to read.
+        tasks = max(2, math.ceil(needed))
+        runs_per_arm = tasks * r
+        total_runs = runs_per_arm * arms
+        rows.append(
+            SizingRow(
+                reps=r,
+                tasks=tasks,
+                runs_per_arm=runs_per_arm,
+                total_runs=total_runs,
+                est_cost_usd=total_runs * cost_per_run,
+            )
+        )
+    return rows

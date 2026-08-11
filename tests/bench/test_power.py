@@ -91,3 +91,84 @@ def test_floor_tasks_is_the_asymptote():
 
     # 2.8^2 * 0.0324 / 0.15^2 = 11.29 -> 12
     assert est.floor_tasks(0.15) == 12
+
+
+from mcp_gateway_router.bench.matrix import minimum_detectable_effect
+from mcp_gateway_router.bench.power import size_battery
+
+
+def test_more_repetitions_never_need_more_tasks():
+    est = VarianceEstimate(
+        between=0.0324, within=0.16, pilot_tasks=6, pilot_reps=5, saturated_tasks=0
+    )
+
+    rows = size_battery(est, margin=0.15, reps=(3, 5, 8, 12, 20))
+
+    counts = [r.tasks for r in rows]
+    assert counts == sorted(counts, reverse=True)
+    assert all(r.tasks >= est.floor_tasks(0.15) for r in rows)
+
+
+def test_the_worked_example_from_the_spec():
+    est = VarianceEstimate(
+        between=0.0324, within=0.16, pilot_tasks=6, pilot_reps=5, saturated_tasks=0
+    )
+
+    rows = {r.reps: r for r in size_battery(est, margin=0.15, reps=(3, 8, 20))}
+
+    assert rows[3].tasks == 30
+    assert rows[8].tasks == 19
+    assert rows[20].tasks == 15
+    assert rows[3].runs_per_arm == 90
+    assert rows[3].total_runs == 180          # two arms
+    assert rows[3].est_cost_usd == pytest.approx(12.60)
+
+
+def test_with_no_within_noise_repetitions_buy_nothing():
+    est = VarianceEstimate(
+        between=0.0324, within=0.0, pilot_tasks=6, pilot_reps=5, saturated_tasks=0
+    )
+
+    rows = size_battery(est, margin=0.15, reps=(3, 20))
+
+    assert rows[0].tasks == rows[1].tasks == est.floor_tasks(0.15)
+
+
+def test_sizing_agrees_with_the_statistic_it_inverts():
+    """At the pilot's own reps, n must match inverting minimum_detectable_effect.
+
+    b^2 + w/reps reconstructs the observed variance exactly when the clamp is
+    inactive, so this is an identity, not an approximation. It is what stops this
+    module drifting into a second, differently calibrated statistic.
+    """
+    reps = 10
+    left = _summary("L", {"t1": (10, reps), "t2": (0, reps), "t3": (0, reps)})
+    right = _summary("R", {"t1": (0, reps), "t2": (0, reps), "t3": (10, reps)})
+
+    est = decompose(left, right, reps)
+    sized = {r.reps: r.tasks for r in size_battery(est, margin=0.15, reps=(reps,))}
+
+    mde = minimum_detectable_effect(left.cells, right.cells)
+    # mde = Z * stdev / sqrt(3); invert for the n that would have made mde == 0.15
+    expected = math.ceil((mde * math.sqrt(3) / 0.15) ** 2)
+
+    assert sized[reps] == expected
+
+
+def test_a_battery_is_never_smaller_than_two_tasks():
+    est = VarianceEstimate(
+        between=0.0, within=0.0, pilot_tasks=6, pilot_reps=5, saturated_tasks=0
+    )
+
+    rows = size_battery(est, margin=0.15, reps=(3,))
+
+    assert rows[0].tasks == 2  # a paired comparison needs two to have any spread
+
+
+def test_a_nonpositive_margin_is_rejected():
+    est = VarianceEstimate(
+        between=0.01, within=0.1, pilot_tasks=6, pilot_reps=5, saturated_tasks=0
+    )
+
+    with pytest.raises(ValueError):
+        size_battery(est, margin=0.0)
