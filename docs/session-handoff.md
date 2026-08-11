@@ -62,9 +62,11 @@ lost the thread.
 >    `fill_budget` is a genuine knapsack rather than a top-K in disguise. Notion is 25%
 >    of tools and 54% of bytes — **cost concentrates by server**, which no earlier doc
 >    said.
-> 4. **`fill_budget` is rank-greedy, not density-greedy.** `algorithm.md` specifies
->    `p·v/c`; the code does not divide by cost. Identical under the old flat-120
->    placeholder, divergent at 39×.
+> 4. **`fill_budget` was rank-greedy, not density-greedy.** `algorithm.md` specifies
+>    `p·v/c`; the code did not divide by cost. Identical under the old flat-120
+>    placeholder, divergent at 39×. **Fixed 2026-08-11** as an opt-in `scores` argument —
+>    no caller has a value term, so it could not simply be switched. Measured gap at a
+>    3,000-token budget: 27 tools vs 13.
 >
 > **The single blocker on everything: collection has not started.** `github` and
 > `playwright` are still registered directly in Claude Code, so real calls bypass the

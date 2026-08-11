@@ -253,6 +253,29 @@ ranked third, top-K takes it and top-K is wrong.
 **Why it bites.** This distinction only exists if costs actually vary, which is why Stage 0's
 harvest is a prerequisite and not a chore.
 
+### Rank-greedy vs. density-greedy
+
+**Plain version.** Two ways to fill the budget. **Rank-greedy** walks the ranked list in
+order and takes whatever fits. **Density-greedy** reorders by *value per token* first —
+score divided by cost — and then takes whatever fits. The second is the `p·v/c` in
+`algorithm.md`.
+
+**Concrete.** One tool scores 1.0 and costs 400 tokens; four others score 0.6 and cost 50.
+Budget 440. Rank-greedy takes the favourite and strands 40 tokens: total value 1.0.
+Density-greedy takes all four cheap ones: total value 2.4. On the real catalog at a
+3,000-token budget the difference is **27 tools against 13**.
+
+**Why it bites — twice.** First, the two are *the same operation* when every tool costs the
+same, which is why nobody noticed under the old flat-120 placeholder. Real schemas span
+39×, and only then does the choice exist.
+
+Second, and less obvious: **density needs a number, and rank order isn't one.** "Third
+best" doesn't divide by tokens. You need an actual value — and it has to be *calibrated*,
+meaning 0.8 really is 80%, or the division is comparing units that don't compare. A cosine
+similarity ranks fine and calibrates badly. Empirical call frequency is a genuine
+probability and works. This is why the fix is an opt-in argument rather than a
+switch-flip: most rankers have nothing legitimate to pass.
+
 ### Pinned core + personalized tail
 
 **Plain version.** Don't learn all 25 slots. Fix a core set that's always present, and let

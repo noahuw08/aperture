@@ -100,6 +100,64 @@ def test_pinned_core_is_exempt_from_budget():
     assert [t.name for t in selected] == ["run_experiment"]
 
 
+def test_scores_buy_more_value_per_token_than_rank_order():
+    """The whole point of `p·v/c`: one expensive favourite loses to two cheap runners-up.
+
+    Rank order takes `run_experiment` (score 1.0, cost 400) and then has 40 tokens of
+    budget it cannot spend. Density order takes both 100-token tools instead, for 1.2
+    units of value against 1.0.
+    """
+    expensive = CATALOG.get("analytics", "run_experiment")  # 400
+    cheap_a = CATALOG.get("analytics", "search_events")  # 100
+    cheap_b = CATALOG.get("analytics", "list_cohorts")  # 100
+    scores = {expensive.key: 1.0, cheap_a.key: 0.6, cheap_b.key: 0.6}
+    ranked = [expensive, cheap_a, cheap_b]
+
+    assert [t.name for t in fill_budget(ranked, 440, COUNTER)] == ["run_experiment"]
+
+    selected = fill_budget(ranked, 440, COUNTER, scores=scores)
+    assert sorted(t.name for t in selected) == ["list_cohorts", "search_events"]
+
+
+def test_a_tool_with_no_score_is_worth_nothing_rather_than_raising():
+    """Rankers shortlist. A tool below the shortlist has no score and must not KeyError."""
+    scored = CATALOG.get("analytics", "get_user")
+    unscored = CATALOG.get("analytics", "search_events")
+
+    selected = fill_budget(
+        [unscored, scored], budget=1000, counter=COUNTER, scores={scored.key: 1.0}
+    )
+    assert [t.name for t in selected] == ["get_user", "search_events"]
+
+
+def test_a_free_tool_sorts_first_instead_of_dividing_by_zero():
+    free = tool("free_tool")
+    counter = StaticTokenCounter({"free_tool": 0, "get_user": 50})
+    paid = CATALOG.get("analytics", "get_user")
+
+    selected = fill_budget(
+        [paid, free],
+        budget=1000,
+        counter=counter,
+        scores={paid.key: 1.0, free.key: 0.001},
+    )
+    assert [t.name for t in selected] == ["free_tool", "get_user"]
+
+
+def test_equal_density_keeps_the_incoming_rank_order():
+    """Under a flat cost every tie is broken by rank, so density reduces to rank order."""
+    flat = StaticTokenCounter({}, default=100)
+    ranked = [
+        CATALOG.get("analytics", "get_user"),
+        CATALOG.get("analytics", "search_events"),
+        CATALOG.get("analytics", "list_cohorts"),
+    ]
+    scores = {t.key: 0.5 for t in ranked}
+
+    selected = fill_budget(ranked, budget=1000, counter=flat, scores=scores)
+    assert [t.name for t in selected] == [t.name for t in ranked]
+
+
 # --- baselines --------------------------------------------------------------
 
 

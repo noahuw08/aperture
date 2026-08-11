@@ -9,6 +9,49 @@ in [`plan.md`](plan.md).
 
 ---
 
+## 2026-08-11 — Density-greedy is opt-in, because the value term does not exist yet
+
+**Decision:** `fill_budget` gains an optional `scores` argument. With it, tools are
+ordered by `value / cost` — the `p·v/c` of `algorithm.md` [4]. Without it, rank order,
+exactly as before. Supersedes the 2026-08-05 greedy-skip entry on ordering only; the
+skip rule and the pinned-core exemption are unchanged.
+
+**Why not simply switch to density.** `fill_budget` takes `list[Tool]` — an order with
+no scores attached — and *every* caller passes one. The rankers have scores internally
+(cosine, call counts, decayed weights) and drop them at the boundary. So "fix it to
+density-greedy" was not implementable as written: there was no value term to divide.
+The alternative, synthesising value from rank position, invents a scale that was never
+measured, which is worse than the bug.
+
+**And density on uncalibrated scores is not obviously an improvement.** `algorithm.md`
+[3] already says this: the `p·v/c` arithmetic is meaningless on monotone-but-uncalibrated
+scores, because 0.8 has to *mean* 80% before trading one 2,000-token tool against twenty
+100-token ones is arithmetic rather than noise. Empirical call frequency qualifies —
+it is a probability by construction. A cosine similarity does not. Making density the
+default would have pushed uncalibrated scores through calibrated-only arithmetic and
+silently moved every recorded frontier number at the same time.
+
+**The gap, measured** (`mcp_gateway_router.density`, real 95-tool catalog, uniform
+value):
+
+| budget | rank | density | gain |
+|---|---|---|---|
+| 1,000 | 4 | 12 | +200% |
+| 3,000 | 13 | 27 | +108% |
+| 8,000 | 32 | 48 | +50% |
+| 20,000 | 58 | 74 | +28% |
+
+**Read this as a packing floor, not a forecast.** Uniform value makes density-greedy
+exactly "cheapest first" and makes the objective a tool count, so the number above is
+what the 39× spread is worth structurally with no model at all. A real ranker puts
+valuable tools first, which shrinks the gap. The point is that the gap is large enough
+at realistic budgets to be worth carrying, and that it was invisible under the old
+flat-120 placeholder where the two orders are the same operation.
+
+**Not done:** threading scores from the baselines that have them. That changes recorded
+frontier numbers, so it wants a re-run rather than an edit, and the frequency baselines
+are the only ones whose scores are legitimately probabilities.
+
 ## 2026-08-10 — Deferral costs names, not schemas; the token pillar is retired
 
 **Decision:** stop treating prefix tokens as a Gate 0 outcome. Cutting the catalog is

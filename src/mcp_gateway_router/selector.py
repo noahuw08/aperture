@@ -61,18 +61,58 @@ class Selector(Protocol):
         ...
 
 
+def _by_density(
+    ranked: list[Tool],
+    counter: TokenCounter,
+    scores: dict[tuple[str, str], float],
+) -> list[Tool]:
+    """Order by value per token, keeping the incoming rank as the tie-break.
+
+    Rankers shortlist, so a tool can arrive with no score; it is worth 0 rather than a
+    ``KeyError``. A free tool has infinite density rather than an undefined one. Ties
+    hold the incoming order — which is what makes density reduce exactly to rank order
+    under a flat cost, so this is a strict generalisation of the old behaviour.
+    """
+
+    def density(tool: Tool) -> float:
+        cost = counter.cost(tool)
+        if cost <= 0:
+            return float("inf")
+        return scores.get(tool.key, 0.0) / cost
+
+    return sorted(ranked, key=density, reverse=True)
+
+
 def fill_budget(
     ranked: list[Tool],
     budget: int,
     counter: TokenCounter,
     pinned: list[Tool] | None = None,
+    scores: dict[tuple[str, str], float] | None = None,
 ) -> list[Tool]:
-    """Greedily take tools in rank order until the token budget is exhausted.
+    """Greedily fill the token budget, skipping tools that don't fit.
 
     Skips over a tool that doesn't fit rather than stopping, so one oversized schema
     doesn't strand the remaining budget. This is the greedy relaxation of the knapsack
-    — a real solver arrives in Phase 5 once scores are calibrated and the value term
-    means something.
+    — a real solver arrives in Phase 5.
+
+    Two orders, and which one you get depends on whether you pass ``scores``:
+
+    * **rank-greedy** (``scores=None``) — take ``ranked`` in the order given. Correct
+      only when cost is flat, since with no scores there is no value term to divide.
+    * **density-greedy** (``scores`` given) — reorder by ``value / cost``, the `p·v/c`
+      of ``algorithm.md`` [4]. On the real catalog schema sizes span 39×, so the two
+      orders diverge and the difference is worth real coverage.
+
+    Rank-greedy stays the default because most callers genuinely have no value term:
+    a ranker that sorts by similarity or by call count is throwing its scale away at
+    the boundary, and inventing one from rank position would be a fabricated value.
+    ``scores`` is keyed by ``tool.key`` and any tool missing from it is worth 0.
+
+    ⚠️ Density is only *meaningful* on calibrated scores — see ``algorithm.md`` [3].
+    Empirical call frequency is a probability and qualifies; a cosine similarity is
+    monotone but not calibrated, and dividing it by tokens mixes units. Passing
+    ``scores`` from an uncalibrated ranker will change the answer without improving it.
 
     ``pinned`` is the always-on core set. It is taken first and is *not* subject to
     the budget: a missing core tool is a task failure, and the ranker never gets to
@@ -88,6 +128,9 @@ def fill_budget(
         selected.append(tool)
         seen.add(tool.key)
         spent += counter.cost(tool)
+
+    if scores is not None:
+        ranked = _by_density(ranked, counter, scores)
 
     for tool in ranked:
         if tool.key in seen:

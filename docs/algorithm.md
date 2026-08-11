@@ -96,9 +96,15 @@ subject to Σ cᵢ · xᵢ ≤ B          cᵢ = measured schema tokens
            dependency bundles      (get_by_id needs an id producer)
 ```
 
-Greedy by density `p·v/c` is the relaxation `fill_budget` implements today; a real solver
-arrives once the value term means something. The gap is worth measuring rather than
-assuming.
+Greedy by density `p·v/c` is the relaxation `fill_budget` implements when you hand it
+`scores`; a real solver arrives once the value term means something. Without `scores` it
+falls back to rank order, which is what every caller still passes — see `decisions.md`,
+2026-08-11. Note the dependency on [3] above: density is only arithmetic on calibrated
+scores, so the fallback is not merely a convenience.
+
+The gap between the two orders is measured rather than assumed —
+`python -m mcp_gateway_router.density`. On the real catalog at a 3,000-token budget it is
+27 tools against 13, under uniform value.
 
 **Interactions are hard constraints here, not terms in the bandit.** Slate and
 combinatorial bandits are a research project; a per-arm CB plus constraints is not.

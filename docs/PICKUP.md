@@ -3,7 +3,7 @@
 _Written at the end of a long session, for whoever continues it. Read this, then
 [`session-handoff.md`](session-handoff.md) for the standing background and the gotcha list._
 
-**Branch** `feat/gateway-data-plane` · **35 commits** · **213 tests passing** · `main` holds
+**Branch** `feat/gateway-data-plane` · **36 commits** · **223 tests passing** · `main` holds
 the Phase 0 baseline only. Nothing is merged yet.
 
 ---
@@ -77,9 +77,12 @@ Q1 now comes first.
 genuine knapsack. Notion is 25% of tools and **54% of bytes** — cost concentrates by
 server, which no earlier doc said.
 
-**f. `fill_budget` is rank-greedy, not density-greedy.** `algorithm.md` specifies
-`p·v/c`; the code does not divide by cost. Identical under the old flat-120 placeholder,
-divergent at 39×. **Unfixed.**
+**f. `fill_budget` was rank-greedy, not density-greedy.** `algorithm.md` specifies
+`p·v/c`; the code did not divide by cost. Identical under the old flat-120 placeholder,
+divergent at 39×. ✅ **Fixed 2026-08-11 as an opt-in `scores` argument** — it could not
+simply be switched, because no caller has a value term to divide by, and density on
+uncalibrated scores is not arithmetic. Gap at a 3,000-token budget: **27 tools vs 13**.
+See `decisions.md`.
 
 ---
 
@@ -97,7 +100,11 @@ divergent at 39×. **Unfixed.**
 
 **On code (unblocked, no dependencies):**
 
-3. Fix `fill_budget` to density-greedy, and measure the gap against rank-greedy.
+3. ~~Fix `fill_budget` to density-greedy~~ — done, §3(f). **What's left of it:** thread
+   scores from the baselines that have them. Only the frequency-based ones (`d-global`,
+   `d-recent`, `popularity`) have scores that are legitimately probabilities; cosine
+   similarity needs calibration first. This moves recorded frontier numbers, so it wants
+   a re-run, not an edit.
 4. ~~Re-measure the deferred-tool prefix cost~~ — done, §6.
 
 ---
