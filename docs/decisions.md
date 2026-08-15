@@ -63,6 +63,15 @@ structure — the harness's own guard already says differences below ~20 points 
 readable here. The fix removes an artefact that would have persisted, shrinking but never
 vanishing, through an entire collection run.
 
+**Amendment, 2026-08-12 — "neutral" overstates it.** The catalog is clustered by
+server (positions 0-23 playwright, 24-47 notion, 48-94 github), so at a fixed budget
+the catalog-order tail deterministically exposes the same servers, in the same
+order, every session — that is fixed and structured, not neutral. Measured against
+200 seeded shuffles of the tail on the real session log, catalog order sits at
+roughly the 65th percentile — mildly flattering, but well within one sd, so the
+entry's conclusion (reject the cost-ordered tail) stands. If this ever needs
+tightening, a seeded shuffle is the cheapest genuinely-neutral tail.
+
 ## 2026-08-11 — Density-greedy is opt-in, because the value term does not exist yet
 
 **Decision:** `fill_budget` gains an optional `scores` argument. With it, tools are

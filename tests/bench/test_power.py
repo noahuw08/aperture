@@ -38,14 +38,46 @@ def test_decompose_splits_between_and_within():
 
     est = decompose(left, right, reps)
 
-    # p=0.5 on both sides -> w = .5*.5 + .5*.5 = 0.5
-    assert est.within == pytest.approx(0.5)
+    # p=0.5 on both sides -> plug-in .5*.5 + .5*.5 = 0.5, then the n-1 correction
+    # reps/(reps-1) = 4/3 -> 0.5 * 4/3 = 0.6667.
+    assert est.within == pytest.approx(2 / 3)
     # Observed diffs are all zero, so between clamps to 0.
     assert est.between == 0.0
     assert est.pilot_tasks == 3
     assert est.pilot_reps == reps
     assert est.saturated_tasks == 0
     assert est.trustworthy is True
+
+
+def test_decompose_recovers_known_components():
+    """Pins the central subtraction ``observed - within/reps`` against hand-derived
+    numbers, with the clamp inactive so the subtraction is actually exercised.
+
+    reps=5. Rates strictly between 0 and 1, with spread across tasks:
+        t1: L=4/5=0.8, R=1/5=0.2  -> diff = +0.6
+        t2: L=1/5=0.2, R=4/5=0.8  -> diff = -0.6
+        t3: L=3/5=0.6, R=3/5=0.6  -> diff =  0.0
+
+    Per-task within (plug-in, then the reps/(reps-1)=5/4 correction):
+        t1: (0.8*0.2 + 0.2*0.8) * 5/4 = 0.32 * 1.25 = 0.4   =  2/5
+        t2: (0.2*0.8 + 0.8*0.2) * 5/4 = 0.32 * 1.25 = 0.4   =  2/5
+        t3: (0.6*0.4 + 0.6*0.4) * 5/4 = 0.48 * 1.25 = 0.6   =  3/5
+    within = mean(2/5, 2/5, 3/5) = (7/5)/3 = 7/15 = 0.46667
+
+    observed = sample variance (n-1) of diffs [0.6, -0.6, 0.0], mean 0:
+        (0.36 + 0.36 + 0.0) / (3-1) = 0.72/2 = 0.36 = 9/25
+
+    between = observed - within/reps = 9/25 - (7/15)/5 = 9/25 - 7/75
+            = 27/75 - 7/75 = 20/75 = 4/15 = 0.26667  (> 0, clamp inactive)
+    """
+    reps = 5
+    left = _summary("L", {"t1": (4, reps), "t2": (1, reps), "t3": (3, reps)})
+    right = _summary("R", {"t1": (1, reps), "t2": (4, reps), "t3": (3, reps)})
+
+    est = decompose(left, right, reps)
+
+    assert est.within == pytest.approx(7 / 15)
+    assert est.between == pytest.approx(4 / 15)
 
 
 def test_between_survives_when_tasks_genuinely_differ():
@@ -229,4 +261,43 @@ def test_a_legacy_rate_only_file_is_rejected(tmp_path):
     )
 
     with pytest.raises(ValueError, match="reps"):
+        load_pilot(path)
+
+
+def test_rate_only_cells_with_a_reps_field_are_rejected_cleanly(tmp_path):
+    """A hand-edited file can carry 'reps' but still have rate-only cells (no
+    'passes'). That must raise ValueError, not a bare KeyError."""
+    path = tmp_path / "mixed.json"
+    path.write_text(
+        json.dumps(
+            {
+                "reps": 5,
+                "arms": {
+                    "A-toolsearch": {"cells": [{"task_id": "t1", "rate": 0.6}]},
+                    "C-semantic": {"cells": [{"task_id": "t1", "rate": 0.2}]},
+                },
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="passes"):
+        load_pilot(path)
+
+
+def test_passes_outside_valid_range_is_rejected(tmp_path):
+    """passes > reps or passes < 0 must not silently read as 100%/0%."""
+    path = tmp_path / "bad_counts.json"
+    path.write_text(
+        json.dumps(
+            {
+                "reps": 5,
+                "arms": {
+                    "A-toolsearch": {"cells": [{"task_id": "t1", "passes": 7}]},
+                    "C-semantic": {"cells": [{"task_id": "t1", "passes": -1}]},
+                },
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="t1"):
         load_pilot(path)

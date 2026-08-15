@@ -40,7 +40,9 @@ class VarianceEstimate:
     """``b^2`` — task-to-task variation in the effect. Clamped at 0."""
 
     within: float
-    """``w`` — variance of a *single-run* difference, ``p(1-p) + p(1-p)``."""
+    """``w`` — variance of a *single-run* difference: the unbiased (n-1) sample
+    variance of each arm's ``r`` Bernoulli outcomes, ``p(1-p) + p(1-p)`` scaled by
+    ``r/(r-1)``."""
 
     pilot_tasks: int
     pilot_reps: int
@@ -76,8 +78,18 @@ def decompose(left: ArmSummary, right: ArmSummary, reps: int) -> VarianceEstimat
     by_task = {c.task_id: c for c in right.cells}
     pairs = [(c, by_task[c.task_id]) for c in left.cells if c.task_id in by_task]
 
+    # p_hat*(1-p_hat) is the *biased* (/n) variance of a Bin(reps, p) mean: its
+    # expectation is p(1-p)*(reps-1)/reps, low by that same factor. The module's
+    # governing convention is n-1 sample variance throughout (see module docstring
+    # and `observed` below), and the n-1 sample variance of reps Bernoulli outcomes
+    # is exactly p_hat*(1-p_hat) * reps/(reps-1) — so that is the correction applied
+    # here. At reps == 1 there is only one 0/1 draw per cell, so within-task variance
+    # cannot be estimated at all; report 0.0 rather than divide by zero.
+    correction = reps / (reps - 1) if reps > 1 else 0.0
+
     per_task_within = [
-        l.success_rate * (1.0 - l.success_rate) + r.success_rate * (1.0 - r.success_rate)
+        correction
+        * (l.success_rate * (1.0 - l.success_rate) + r.success_rate * (1.0 - r.success_rate))
         for l, r in pairs
     ]
     saturated = sum(1 for w in per_task_within if w == 0.0)
@@ -193,6 +205,21 @@ def load_pilot(path: Path) -> tuple[ArmSummary, ArmSummary, int]:
     arms = payload.get("arms") or {}
     if len(arms) < 2:
         raise ValueError(f"{path} needs at least two arms to compare, found {len(arms)}")
+
+    for name, body in list(arms.items())[:2]:
+        for c in body["cells"]:
+            if "passes" not in c:
+                raise ValueError(
+                    f"{path}: task {c.get('task_id', '?')!r} in arm {name!r} has no "
+                    "'passes' — it is probably the older rate-only format, which "
+                    "cannot support sizing. Re-run the pilot."
+                )
+            passes = c["passes"]
+            if not (0 <= passes <= reps):
+                raise ValueError(
+                    f"{path}: task {c['task_id']!r} in arm {name!r} has "
+                    f"passes={passes!r}, outside the valid range [0, {reps}]."
+                )
 
     summaries = [
         ArmSummary(

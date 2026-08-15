@@ -673,7 +673,7 @@ The `if "arms" in summary` branch keeps the existing `results/arms_smoke.json` r
 
 - [ ] **Step 6: Verify the notebook builder still runs**
 
-Run: `uv run python notebooks/build_arms_walkthrough.py`
+Run: `uv run --with nbformat python notebooks/build_arms_walkthrough.py`
 Expected: exits 0, rewrites `notebooks/arms_walkthrough.ipynb`
 
 Then confirm the existing cached file still displays:
