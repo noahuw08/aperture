@@ -97,6 +97,45 @@ The MCP protocol forces the exposure decision at three moments, and they have wi
 different amounts of information available. Almost every disagreement about this project is
 really a disagreement about which one you're talking about.
 
+### Why filtering means intercepting `tools/list`
+
+**Plain version.** The model never talks to an MCP server. The *client* — Claude Code,
+Cursor — calls `tools/list`, takes the array that comes back, and renders it into the
+prompt prefix. So the `tools/list` response **is** the exposure. A tool that isn't in that
+array does not exist as far as the model is concerned; a tool that is in it exists
+completely. There is no third state.
+
+**Why it has to be the response path.** The protocol has no per-tool visibility flag — no
+`hidden`, no `defer_loading`, no "include but don't show." The only way to make a tool not
+appear is to not send it. And the only party that can do that is upstream of the client,
+because once the client has the array it has already built the prefix and we own no hook
+after that point. Hence: intercept the response, cut, forward.
+
+**Why not filter at `tools/call` instead.** You can, and a gateway should also do it — but
+it buys something different. Denying at *call* time means the model already read the
+schema, already paid the prefix for it, already planned around it, and now has to recover
+from an error. Denying at *list* time means it never knew. Same policy, two enforcement
+points, and only one of them affects context. (Kong runs both; a 2026 changelog entry
+records the bug where the two disagreed — `tools/list` leaked tools that the call-time ACL
+would have denied.)
+
+**Why it can't be undone later.** Once a schema is in the prefix it is cached and billed
+there. Removing it isn't an edit — it's `list_changed` plus a re-fetch, which invalidates
+the cache behind it. See decision point B.
+
+**The consequence, and it's the important one.** Because the response array is the entire
+surface, the gateway's action space is exactly five levers: **which entries appear, their
+names, their descriptions, their order, and when the list changes.** Nothing else reaches
+the client. That is why a design premised on "pre-load a personalized core and defer the
+rest" is unbuildable — deferral is not one of the five.
+
+**And subtraction is the only lever with a guarantee behind it.** Not sending a tool is
+authoritative: the client cannot act on what it never received. Everything else in that
+list is *text we are asking the client to believe* — and the probes in `872e043` showed it
+mostly doesn't. Descriptions never reached the client's own retriever, and text appended to
+a tool result was read and explicitly refused on the grounds that tool output is not an
+operator instruction. Suppression is enforceable; promotion is a request.
+
 ### Decision point A — `tools/list`, at session open
 
 **Plain version.** The client connects and asks "what tools do you have?" You must answer
@@ -116,6 +155,26 @@ it." So you *can* revise the decision once the task is known.
 them invalidates the prompt cache for `tools`, the system prompt, and the entire message
 history behind it — all re-billed at full price. Nobody has measured what that actually
 costs, which is why no exploration rate has been chosen.
+
+### Meta-tool
+
+**Plain version.** A tool whose subject is the catalog itself. It does nothing in the world —
+it tells the model which tools exist. `find_tools("something about releases")` returns
+schemas.
+
+**What it trades.** One schema in the [prompt prefix](#the-prompt-prefix-aka-the-context-tax)
+instead of ninety-five, at the price of an extra round trip and k schemas in a tool result
+whenever the agent needs one. A context-size problem converted into a latency problem.
+
+**Why the shape matters.** Three consequences, and they drive everything at decision point C:
+
+- The schemas arrive **in a tool result, not the prefix** — so they are neither cached nor
+  billed per turn, but they are delivered through the channel measured as untrusted.
+- The tool it names **was never advertised**, so calling it requires the client to emit a
+  `tools/call` for a name absent from the `tools/list` array. Whether any client does that is
+  an assumption, not a fact — see [miss](#miss-and-missing-tool-demand).
+- It is **the only channel carrying the task**. The agent writes the query, handing us the
+  prompt that [decision point A](#decision-point-a--toolslist-at-session-open) cannot see.
 
 ### Decision point C — a `find_tools` call
 
@@ -352,6 +411,84 @@ you can't learn it from usage data, because a tool that isn't exposed generates 
 It's also entirely dependent on an unverified assumption: that the client actually forwards
 such an attempt instead of silently filtering it. That's what *capture rate* measures, and
 it's the first thing the dogfood deployment is for.
+
+**Why we care at all — it is the only uncensored error signal.** The gateway's job is to not
+send some tools, but every observation coming back is about the tools it *did* send. Cut
+tools generate no usage by construction, so the log cannot distinguish a good cut from a bad
+one. A session where we withheld the one tool the task needed looks identical to a session
+that went fine — the agent just quietly does worse. Measured: arm C exposed no search tool
+for a `search_code` task and produced **zero call records**; the miss was visible only by
+differencing against arm A's log. An error signal that requires running a control arm forever
+is not one you can ship.
+
+`was_exposed: false` replaces that with the agent telling us directly. Per-request,
+unambiguous, no control arm, no gold labels. The same asymmetry governs *learning*: a ranker
+trained on this log sees "exposed and called" against "exposed and not called," and the cut
+tools — where the losses are — contribute nothing. Censored feedback makes a ranker confident
+exactly where it is already winning. The [exploration floor](#exploration-floor) exists to buy
+that feedback back, and it costs a cache invalidation every time. A miss is the same evidence
+for free.
+
+**Why it has never fired, and why that is structural.** 48 call records, 48 `true`. The model
+cannot want what it cannot see: availability is resolved before a call is ever generated, so
+an unexposed tool is not refused — it was never a candidate. Tool search does not rescue this
+either, since it only ranks what the server declared. In the ordinary architecture there is
+**no mechanism by which this signal could fire at all.** That is the argument for
+[decision point C](#decision-point-c--a-find_tools-call): `find_tools` is the only arrangement
+where calling an unexposed tool is the *normal path* rather than an error, so missing demand
+becomes a side effect of the product working.
+
+**The honest limit.** If you never cut, there is no missing demand to observe — and on this
+client at this catalog size, cutting saves approximately nothing (see
+[deferral](#deferral-aka-tool-search)). The signal is worth whatever cutting is worth. Where
+it survives that objection is the control plane: *entitlement* denials produce the same
+record with no ranker involved, and "your team keeps reaching for tools you have not
+licensed" is sellable before any model exists.
+
+### What the ranker actually learns from a miss
+
+**Plain version.** A miss is a training label sitting in the one place the log has none.
+
+The exposure log gives you context → exposed set → called subset, which trains *"given I
+exposed these, which get called."* The ranker's job is *"given the whole catalog, which should
+I expose."* The gap between those two questions is exactly the tools never exposed, and a
+`was_exposed: false` record is a labeled positive inside it.
+
+Four uses, in rough order of how badly each is currently unmet:
+
+1. **Gradient where there is none.** A tool that is never exposed appears in no loss term, so
+   its score never moves and today's cut becomes permanent. Missing demand is the only thing
+   that lifts a tool back from below the line — the same job as the
+   [exploration floor](#exploration-floor), minus the cache invalidation per unit of
+   information.
+2. **The knapsack's value term.** `fill_budget` maximises `p·v/c` and no caller has a `v`.
+   Value is roughly `P(session needs T)` × the cost of not having it. The log measures
+   `P(called | exposed)`, which is conditioned on the decision under evaluation and therefore
+   biased by construction. A miss measures the numerator directly, per context.
+3. **Off-policy evaluation.** [IPS/SNIPS/DR](#ope-ips-snips-dr) reweight by `1/propensity`, so
+   tools the logging policy exposed with probability ≈ 0 blow up the variance or get dropped.
+   Without misses you can only evaluate policies resembling the one already running — never a
+   better one.
+4. **Grain.** Records arrive tagged with `(repo, branch, hour)`, which is the
+   [`(user, task)` grain](#the-unit-is-user-task-not-user) the personalization claim rests on.
+
+**The catch — a working `find_tools` drains this channel.** If the agent's route to a cut tool
+*is* the meta-tool, arm B converts misses into successful disclosures. Good for the product,
+and it empties the signal: residual misses are only the cases where the agent guessed a raw
+tool name, which are rare and weak.
+
+What replaces it is better, but it is *not the same record*. A `find_tools` call carries **the
+query text** — the task-grain prompt [decision point A](#decision-point-a--toolslist-at-session-open)
+structurally cannot see. So two distinct signals, feeding different stages:
+
+| Record | Signal | Volume | Feeds |
+|---|---|---|---|
+| `disclosed` + query | what was wanted, and what was then called | high, self-labelling | decision point C retrieval |
+| `unexposed` | the point-A ranker was wrong | rare, unbiased | the point-A ranker |
+
+They have different statistics and different consumers, which is why the exposure field needs
+three states rather than a boolean. Summing them into one `false` buries the rare unbiased
+signal under the common one.
 
 ### Dead weight
 
