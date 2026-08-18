@@ -44,15 +44,33 @@ about decision point A, where MCP forces the exposure decision at `tools/list`, 
 user has typed anything. At A, retrieval cannot run at all and tenant + seat is the only
 signal there is. So Gate 0's answer only binds if the product commits to operating at C.
 
-Three more things survive strong retrieval:
+### What tool search structurally cannot see
 
-- **Ambiguity.** *"Show me last week's numbers"* — retrieval can't disambiguate which
-  numbers; who you are can.
-- **Confusable ties.** `get_user` / `get_user_profile` / `fetch_user_details` score nearly
-  identically on the same query. Which is right depends on tenant schema and seat history.
-- **Allocation, not ordering.** Retrieval ranks; it doesn't decide how much budget to
-  spend or what fills the residual slots — plausibly the tools needed *next* turn, which
-  session history predicts and a similarity score does not.
+The list below is the same argument stated offensively: not "why the gate doesn't kill
+us," but **where a challenger arm would actually attack**. None of these are retrieval-
+quality gaps — we will not beat the incumbent at matching a query to a description. They
+are signals the client has no channel for, and a proxy has by construction.
+
+| Blind spot | Why tool search can't see it | Who can |
+|---|---|---|
+| **Ambiguity** | *"Show me last week's numbers"* — nothing in the query disambiguates which numbers | identity: tenant schema + seat |
+| **Confusable ties** | `get_user` / `get_user_profile` / `fetch_user_details` score near-identically on the same query | tenant schema + seat history |
+| **Allocation, not ordering** | Retrieval ranks; it doesn't decide budget spend or what fills residual slots | a selector that owns the budget |
+| **Sequence** | Ranks against the *current* need; cannot anticipate the next one | a proxy with session history |
+| **Co-occurrence** | Scores each tool independently; doesn't know `create_branch → push_files → create_pull_request` travels together | a proxy with call sequences |
+| **Failure memory** | Will resurface a tool that errored on scopes thirty seconds ago | a proxy logging `status: error` |
+| **Entitlement** | Retrieves tools the seat cannot call, which then fail | a proxy that knows scopes |
+
+**The engineering consequence.** The gateway's action space is exactly five levers —
+which tools appear, what they are named, what their descriptions say, their order, and
+when the list changes (`list_changed`). Deferral is *not* one of them: MCP has no
+per-tool `defer_loading`, so any design premised on pre-loading a personalized core is
+unbuildable. Given that cutting the catalog is worth ~310 tokens and costs
+recoverability, the levers worth building on are **descriptions and timing** — steering
+the incumbent's retriever with signals it cannot have, rather than replacing it.
+
+Entitlement is the one row where *subtraction* is still correct: those calls fail anyway.
+It is also governance rather than personalization, and needs no gate to justify.
 
 Neither outcome is project death. Measurement is still worth selling; it just isn't the
 product we set out to build, and saying so early is the point of this stage.

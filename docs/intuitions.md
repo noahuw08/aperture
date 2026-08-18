@@ -483,6 +483,26 @@ Named decision points on the roadmap, each with a **failure branch** written dow
 Gate 0 asks whether retrieval already reaches the frontier. Gate 1 asks whether seat history
 adds anything on top. A gate without a stated failure branch is a wish.
 
+### Why the semantic arm is built before the engine
+
+**Plain version.** Arm C runs off-the-shelf retrieval — a downloaded bi-encoder, no
+personalization, no history — and it exists before the engine does because it is the
+*control half of the engine's own experiment*. Gate 1 asks whether seat history beats **the
+identical selector without it**, and that selector is arm C. You cannot measure what
+personalization adds until you have measured what it adds to.
+
+**Why it bites.** Build the engine first and three things go wrong. A loss cannot be
+attributed — "the idea is wrong" and "this implementation is bad" look identical, and only
+one of them is fixable. There is no history to train on. And the engine's commodity
+substitute is what a vendor would ship instead, so beating it is the minimum bar for the
+engine existing at all. C also happens to be the only arm that exercises the live path;
+arm A runs in shadow mode, where no cut happens.
+
+**What it does not settle.** C is task-conditioned and the engine is not — that is
+*different* signal, not less of it (see [Task-conditioned vs. session-blind](#task-conditioned-vs-session-blind)).
+So a weak C rescopes Gate 0 rather than killing the engine, which is why its failure branch
+reads "centre of gravity moves to `find_tools`" and not "stop."
+
 ### Null arm
 
 A deliberately meaningless variant — random selection, or seats drawn from an identical
