@@ -25,6 +25,27 @@ GATEWAY_SHIM = "/Users/nguyenvietkhoi/mcp-gateway-router/bin/mcp-gateway"
 TOOL_SEARCH = "ToolSearch"
 
 
+def _as_text(content: Any) -> str:
+    """Flatten a tool result to searchable text.
+
+    The SDK returns tool-result content as a string, a list of blocks, or ``None``
+    depending on the tool. Callers only ever scan this for tool names, so a lossy
+    flatten is the right trade — and it keeps the probe working if the shape of a
+    ``ToolSearch`` result changes upstream.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, (list, tuple)):
+        return "\n".join(_as_text(item) for item in content)
+    for attr in ("text", "content"):
+        value = getattr(content, attr, None)
+        if value is not None and value is not content:
+            return _as_text(value)
+    return str(content)
+
+
 @dataclass
 class ArmResult:
     arm: str
@@ -39,6 +60,13 @@ class ArmResult:
     output_tokens: int
     tool_search_calls: int
     tool_calls: dict[str, int] = field(default_factory=dict)
+    #: Raw text of each ``ToolSearch`` result, in order.
+    #:
+    #: Counting searches says *how often* the client retrieved; this says *what came
+    #: back*. That distinction is the difference between "our text changed what the
+    #: ranker surfaced" and "our text changed what the model picked from what it was
+    #: already shown" — two different levers, only one of which can improve recall.
+    search_results: list[str] = field(default_factory=list)
     error: str | None = None
     #: Set by the matrix once the task's assertion has been applied. `ok` means the
     #: run completed; `passed` means it produced the right answer. A run can be `ok`
@@ -98,11 +126,24 @@ async def run_arm(
     )
 
     tool_calls: collections.Counter[str] = collections.Counter()
+    # Tool results arrive in a later message than the call, so the ids have to be
+    # carried forward to tell a ToolSearch result from any other tool's result.
+    search_ids: set[str] = set()
+    search_results: list[str] = []
     result = None
     async for message in query(prompt=prompt, options=options):
         for block in getattr(message, "content", None) or []:
-            if type(block).__name__ == "ToolUseBlock":
-                tool_calls[getattr(block, "name", "?")] += 1
+            kind = type(block).__name__
+            if kind == "ToolUseBlock":
+                name = getattr(block, "name", "?")
+                tool_calls[name] += 1
+                if name == TOOL_SEARCH:
+                    block_id = getattr(block, "id", None)
+                    if block_id is not None:
+                        search_ids.add(block_id)
+            elif kind == "ToolResultBlock":
+                if getattr(block, "tool_use_id", None) in search_ids:
+                    search_results.append(_as_text(getattr(block, "content", None)))
         if type(message).__name__ == "ResultMessage":
             result = message
 
@@ -110,7 +151,8 @@ async def run_arm(
         return ArmResult(
             arm=arm, task_id=task_id, ok=False, answer=None, turns=0, cost_usd=0.0,
             input_tokens=0, cache_creation_tokens=0, cache_read_tokens=0,
-            output_tokens=0, tool_search_calls=0, error="no ResultMessage",
+            output_tokens=0, tool_search_calls=0, search_results=search_results,
+            error="no ResultMessage",
         )
 
     usage: dict[str, Any] = result.usage or {}
@@ -129,4 +171,5 @@ async def run_arm(
         output_tokens=usage.get("output_tokens", 0),
         tool_search_calls=searches,
         tool_calls=dict(tool_calls),
+        search_results=search_results,
     )
