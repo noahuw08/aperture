@@ -11,6 +11,7 @@ supported way to serve a tool list that changes at runtime.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -69,11 +70,63 @@ class Gateway:
             task=os.environ.get("MCP_GATEWAY_TASK") or None,
         )
 
+    def _rewrite(self, tools: list[Tool]) -> list[Tool]:
+        """Apply ``description_overrides`` to the advertised set.
+
+        Applied *after* selection, never before: the override changes what the client's
+        ranker reads, not what our own selector scored. Rewriting first would make the
+        two arms differ in two places at once.
+
+        Identity is untouched — ``server_id`` and ``name`` are what routing and the log
+        key on, so a rewritten tool still calls through and still reconciles against the
+        catalog. Only the text moves.
+        """
+        overrides = self._config.description_overrides
+        if not overrides:
+            return tools
+        return [
+            dataclasses.replace(t, description=overrides[f"{t.server_id}/{t.name}"])
+            if f"{t.server_id}/{t.name}" in overrides
+            else t
+            for t in tools
+        ]
+
     async def list_tools(self) -> list[Tool]:
         catalog = await self._pool.aggregate()
         exposed = self._policy.decide(catalog, self._pool.catalog_hash(), self._context())
+        # Keys, not rewritten tools: `was_exposed` must survive a description change.
         self._exposed = {t.key for t in exposed}
-        return exposed
+        return self._rewrite(exposed)
+
+    def _augment(self, result: Any, key: tuple[str, str]) -> Any:
+        """Append a gateway suggestion to a tool result.
+
+        This is the only lever that acts *after* a call, and therefore the only one
+        with within-session state to act on. It is also the only one that can surface
+        a tool the client's ranker would never return — it bypasses retrieval instead
+        of trying to influence it, which the description probe showed is impossible.
+
+        **Fails open, and silently.** A suggestion is an optimisation; a tool result is
+        the answer the user is waiting for. If the result isn't the shape we expect —
+        a different SDK version, an upstream returning something exotic — the original
+        is returned untouched rather than risking the call over a hint.
+
+        The text is prefixed so it is unambiguously ours. We are injecting content into
+        our own client's context, which is legitimate for a trusted proxy and would not
+        be if it were indistinguishable from what the upstream said.
+        """
+        suggestion = self._config.result_suggestions.get(f"{key[0]}/{key[1]}")
+        if not suggestion:
+            return result
+        try:
+            from mcp.types import TextContent
+
+            content = getattr(result, "content", None)
+            if isinstance(content, list):
+                content.append(TextContent(type="text", text=suggestion))
+        except Exception:
+            logger.warning("could not attach suggestion to %s/%s result", *key)
+        return result
 
     async def call_tool(self, advertised: str, arguments: dict) -> Any:
         server_id, tool_name = parse_advertised(advertised)
@@ -81,7 +134,8 @@ class Gateway:
         started = time.monotonic()
         status = "ok"
         try:
-            return await self._pool.call(server_id, tool_name, arguments)
+            result = await self._pool.call(server_id, tool_name, arguments)
+            return self._augment(result, key)
         except Exception:
             status = "error"
             raise

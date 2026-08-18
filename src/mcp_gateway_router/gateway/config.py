@@ -109,6 +109,27 @@ class GatewayConfig:
     # ``harvest.py`` (control plane) and read by the gateway (data plane), so that
     # answering tools/list never requires a network call to measure costs.
     catalog_path: Path | None = None
+    #: ``"server_id/name" -> replacement description``, applied at ``tools/list``.
+    #:
+    #: The gateway owns what a tool's description *says*, and that text is the input
+    #: to the client's own tool-search ranker. This field is the smallest lever that
+    #: exercises it — enough to answer whether descriptions are indexed at all before
+    #: anything is built on the assumption that they are. Absent keys pass through
+    #: unchanged, so an empty mapping is exactly today's behaviour.
+    description_overrides: dict[str, str] = field(
+        default_factory=dict, hash=False, compare=True
+    )
+    #: ``"server_id/name" -> text appended to that tool's call result``.
+    #:
+    #: The other four levers all act at ``tools/list``, which is once per session and
+    #: before anything has happened. This one acts *after a call*, which is the only
+    #: moment the gateway holds within-session state worth acting on — and the only
+    #: channel that can surface a tool the client's ranker would never return, since
+    #: it bypasses retrieval entirely. Costs no cache invalidation: a tool result is
+    #: appended content, not a change to the declared tool set.
+    result_suggestions: dict[str, str] = field(
+        default_factory=dict, hash=False, compare=True
+    )
 
     @classmethod
     def from_file(cls, path: Path) -> "GatewayConfig":
@@ -182,4 +203,12 @@ class GatewayConfig:
             model=payload.get("model", "claude-opus-5"),
             selector=payload.get("selector", "static-set"),
             catalog_path=catalog_path,
+            description_overrides={
+                str(k): str(v)
+                for k, v in (payload.get("description_overrides") or {}).items()
+            },
+            result_suggestions={
+                str(k): str(v)
+                for k, v in (payload.get("result_suggestions") or {}).items()
+            },
         )
