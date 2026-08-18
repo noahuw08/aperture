@@ -1,202 +1,233 @@
-# Pickup — state of play, 2026-08-10
+# Pickup — state of play, 2026-08-18
 
 _Written at the end of a long session, for whoever continues it. Read this, then
-[`session-handoff.md`](session-handoff.md) for the standing background and the gotcha list._
+[`session-handoff.md`](session-handoff.md) for the standing background and the gotcha list.
+Supersedes the 2026-08-10 pickup; its findings §3(a)–(f) still hold._
 
-**Branch** `feat/gateway-data-plane` · **36 commits** · **223 tests passing** · `main` holds
-the Phase 0 baseline only. Nothing is merged yet.
+**Branch** `feat/gateway-data-plane` · **47 commits, pushed** · **269 tests passing** ·
+`main` holds the Phase 0 baseline only. Nothing is merged yet.
 
 ---
 
-## 1 · What the project is now asking
+## 1 · The one-paragraph version
 
-Two questions, deliberately co-equal. Conflating them is how the second one gets lost.
+This session ran the first two live probes against the client and **both channels came
+back shut**. Descriptions do not reach the tool-search ranker; text appended to a tool
+result reaches the model and is explicitly refused as untrusted. The unifying finding is
+that **the gateway is not a trusted principal in the client's trust model**, and the trust
+gradient runs one way: our text can make the model trust a tool *less*, never *more*. That
+closes promotion — and exploration is inherently promotion — so no bandit can ride a
+semantic channel. Only structural levers survive: which tools appear, their names, and when
+the list changes. Separately: **arm B (`find_tools`) was decided on 2026-08-05, listed as a
+P2 deliverable, and never built** — and it is close to the design this session re-derived
+from scratch.
 
-| | **Q1 (Gate 0)** | **Q2** |
+---
+
+## 2 · What was measured, and what it means
+
+### 2a · Descriptions do not reach the ranker
+
+`bench/probe_descriptions.py` → `results/probe_descriptions.json`.
+
+| condition | target surfaced | target called | decoy surfaced | turns |
+|---|---|---|---|---|
+| `control` | ✅ | ✅ | — | 3 |
+| `blind` — target's description made irrelevant | ✅ | ✅ | — | 3 |
+| `steer` — target blinded, decoy boosted | ✅ | ❌ | ❌ | **13** |
+
+Two directions, both null. Make the right tool's description maximally irrelevant → still
+retrieved. Make a wrong tool's description maximally relevant → never retrieved. **The
+candidate set is name-driven.**
+
+Descriptions *do* reach the model after retrieval: in `steer` the agent read the blinded
+description, concluded *"the `list_releases` tool doesn't list releases"*, and routed around
+a working tool via three others — **3 turns to 13**.
+
+### 2b · Tool results reach the model and are refused
+
+`bench/probe_suggestions.py` → `results/probe_suggestions.json`. The model quoted our
+injected hint and declined it:
+
+> *"the tool response included an embedded instruction claiming to be a 'gateway hint'…
+> That's content returned by the tool, **not an instruction from you**, so I ignored it."*
+
+Correct behaviour, not a framing problem, and not promptable-around.
+
+### 2c · The synthesis
+
+**Suppression is reachable; promotion is not.**
+
+| Blind spot | Shape | Reachable |
 |---|---|---|
-| Question | Does Claude's own tool search already moot ranking-with-a-prompt? | Can we predict a session's tools *at open*, before any prompt? |
-| Decision point | C — task in hand | A — no prompt exists |
-| Metric | task success at matched measured cost | coverage under temporal replay |
-| Cost | model runs (on subscription, not API credit) | **free** |
-| Status | harness complete; needs tasks + a margin | harness complete; needs sessions |
+| Failure memory · Entitlement | suppress | ✅ |
+| Sequence · Co-occurrence · Identity | **promote** | ❌ |
 
-**The ordering changed during this session.** Q1 is now load-bearing and should be read
-first — see §3.
+What remains are **structural** levers — the ones the client needn't trust because they
+aren't claims: *which tools appear*, *their names*, *when the list changes*.
 
----
+### 2d · There is no within-session decision point
 
-## 2 · What is built
+**`tools/list` fires exactly once across all 39 sessions on disk, and `tools_called` is
+empty at every decision record.** A within-session ranker has no moment to act, and
+`errors_seen` / `turn_index` (`selector.py:33-34`) stay declared-but-never-written.
+Creating that moment needs `list_changed`: unimplemented, cache cost unmeasured.
 
-```
-src/mcp_gateway_router/
-  gateway/     the data plane — proxies 95 tools (github 47 · notion 24 · playwright 24)
-               over stdio + HTTP, cuts to a budget in live mode, fails open, logs
-               everything to runs/{session_id}.jsonl
-  replay/      Q2 — walks the session log in time order, scores any point-A selector.
-               Baselines: random (null), d-global, d-recent, per-session oracle.
-  bench/       Q1 — Agent SDK harness. Arms, task battery format, deterministic
-               scoring, matrix runner with paired stats and an MDE guard.
-  harvest.py   control plane — tools/list + count_tokens -> results/catalog.json
-notebooks/     gateway_walkthrough (free) · arms_walkthrough (model cells gated)
-```
+### 2e · The cut is a one-shot commitment
 
-**Two notebooks exist specifically to remove ambiguity** that prose kept reintroducing:
-shadow vs live, and our selection vs Claude's tool search. They run the real system.
-Use the `mcp-gateway (.venv)` kernel.
+Arm C ranks all 95 and exposes ~11. In the real `search_code` case it spent **2,968 of
+3,000 tokens** on browser and Notion tools, exposed no search tool, and produced **zero call
+records** — the miss is visible only by differencing against arm A's log. No second trip, no
+feedback, no way to change its mind. **A mediocre retriever with three tries beats a perfect
+one-shot retriever**, independent of ranking quality.
+
+### 2f · `was_exposed: false` has still never fired
+
+**48 call records, 48 `true`.** Availability is resolved before a call is generated, so
+there is nothing to log. The only design that revives it is arm B — a call to a tool learned
+from a `find_tools` result is by definition unexposed.
 
 ---
 
-## 3 · The findings that changed the argument
+## 3 · Arm B was designed, decided, and skipped
 
-Recorded in the Notion decision log (newest first) and in `gateway-setup.md`.
+`docs/superpowers/specs/2026-08-08-mvp-gateway-design.md:134`:
 
-**a. Tool search defers MCP schemas, so the token-tax premise is weak at this catalog
-size.** The project was founded on schemas being a recurring per-call tax. Deferral means
-cutting 95 → 25 saves far less than assumed. ✅ **Re-measured and confirmed — §6.** The
-cut is worth **~310 tokens**; loaded-vs-deferred is a **35×** spread.
+| Arm | Gateway serves | Status |
+|---|---|---|
+| **A · native ToolSearch** | full catalog | ✅ built |
+| **B · gateway `find_tools`** | pinned core + `find_tools` | ❌ **never built** |
+| **C · task-conditioned knapsack** | bi-encoder + budget | ✅ built — spec calls it *"Not a product"* |
 
-**b. Capture rate is NEGATIVE.** With a tool deliberately withheld, the agent ran
-`ToolSearch`, saw it was unavailable, completed via `Bash`, and said so. **Zero call
-records reached the gateway.** `was_exposed: false` cannot be collected here, because
-availability is resolved *before* a call is generated. "Measure demand for tools you
-aren't serving" — named in the roadmap as core differentiation — has no channel on this
-client. The replacement signal is the agent *narrating the workaround*, which lives in
-model output: **Q1-observable, Q2-blind.**
+`decisions.md:595` (2026-08-05), *"Ship `find_tools`"*:
 
-**c. Q1 needs no API credit.** The Agent SDK authenticates through the Claude Code CLI's
-credential (verified with `ANTHROPIC_API_KEY` unset). The zero account balance gates
-`count_tokens`, not the benchmark. Cost is ~$0.07 per 3-turn run, roughly 5× below the
-first estimate.
+> Progressive disclosure … is the **transport** for task-grain context — the only legitimate
+> channel that delivers the prompt. **Competing with it is a losing position; carrying it is
+> not.** Also yields an unambiguous miss signal.
 
-**d. Together, (a) and (b) move two of the three original pillars.** What survives is
-**decision point A** (tool search cannot run before a prompt) and **selection quality**
-(fewer searches, fewer turns, fewer wrong picks). Both are Q1 questions — which is why
-Q1 now comes first.
+Almost exactly what this session re-derived. It was also the best offline baseline:
+**0.549 at 6,362 tokens** vs semantic-retrieval's 0.451 at 15,960.
 
-**e. Real catalog: 39× schema-size spread**, median 1,001 chars. `fill_budget` is a
-genuine knapsack. Notion is 25% of tools and **54% of bytes** — cost concentrates by
-server, which no earlier doc said.
+**Where it exists:** `baselines.py:216-280` (`ProgressiveDisclosure`, `META_TOOL` at :231),
+`frontier.py:115`, `tests/test_harness.py`. **Zero hits anywhere in `gateway/`.**
 
-**f. `fill_budget` was rank-greedy, not density-greedy.** `algorithm.md` specifies
-`p·v/c`; the code did not divide by cost. Identical under the old flat-120 placeholder,
-divergent at 39×. ✅ **Fixed 2026-08-11 as an opt-in `scores` argument** — it could not
-simply be switched, because no caller has a value term to divide by, and density on
-uncalibrated scores is not arithmetic. Gap at a 3,000-token budget: **27 tools vs 13**.
-See `decisions.md`.
+**The pinned core** was `static_keys[:3]` — the three most-required tools from the fit split
+(`run_frontier.py:75,93`). There is **no specification of what it should be in production**;
+a live gateway has no gold labels. Open design question, not a config value to copy.
 
 ---
 
-## 4 · What is blocked, and on whom
+## 4 · What was built this session
 
-**On the human:**
+| Commit | What |
+|---|---|
+| `6a5b2a4` | `ArmResult.search_results` — captures what ToolSearch *returned*, not just that it ran |
+| `afa482d` | `description_overrides` + `result_suggestions` gateway levers, invariants pinned by test |
+| `872e043` | both probes and their results |
+| `3a036c1` | `roadmap.md` blind-spot table + five-lever action space; `intuitions.md` arm A/C asymmetry |
 
-1. **Collect sessions.** Registration is done — `gateway` is the only MCP server at user
-   scope, all three upstreams proxied. Just work across varied projects. **8 sessions so
-   far, mostly test traffic.** Q2 replays this; Q1's task battery is authored *from* it.
-   Watch the `project` field: one project means `D-context` degenerates to `D-global`.
-2. **Three numbers.** The Gate 0 margin, the Q2 margin, and a collection stopping rule.
-   None block collection; all block *reading* it. The Gate 0 margin also sizes the task
-   battery.
+**Invariant worth knowing:** `_exposed` is built from **pre-rewrite** `(server_id, name)`
+keys, so a rewritten tool still routes and still logs `was_exposed` correctly. The obvious
+implementation — building it from the rewritten list — passes every other test while
+corrupting the one field the missing-demand signal depends on. There is a test named for it.
 
-**On code (unblocked, no dependencies):**
-
-3. ~~Fix `fill_budget` to density-greedy~~ — done, §3(f). **What's left of it:** thread
-   scores from the baselines that have them. Only the frequency-based ones (`d-global`,
-   `d-recent`, `popularity`) have scores that are legitimately probabilities; cosine
-   similarity needs calibration first. This moves recorded frontier numbers, so it wants
-   a re-run, not an edit.
-4. ~~Re-measure the deferred-tool prefix cost~~ — done, §6.
+**Notion** (`🔌 Personalizing MCP Tool Exposure`) gained four appends, **each needing one
+manual drag** one level in: Snapshot 6; Intuitions → Stage 5 *"Arm A vs arm C — what a miss
+costs"*; Evaluation → residual list extended from four places to eight; Architecture in
+diagrams → **§3 revised runtime diagram** (adds `_rewrite`, `SEL`, `TASK`).
 
 ---
 
-## 5 · How to run things
+## 5 · Traps discovered the hard way
+
+Four false starts, each of which produced a **confidently wrong verdict** before a guard
+caught it. All now documented in the probe modules.
+
+1. **A probe task must force a tool call.** The first asked which login handle the session
+   was signed in with; Claude Code injects the account identity, so the agent answered from
+   context in one turn — zero calls, zero searches, three indistinguishable conditions.
+2. **⚠️ Config files must live beside their `.env`.** `from_file` resolves `.env`, `log_dir`
+   and `catalog_path` relative to *the config's own parent*, and `_expand` **raises** on an
+   unresolvable `${VAR}`. A config written elsewhere kills the gateway at startup and the
+   session silently sees **no MCP tools at all** — indistinguishable from a null result.
+   **`bench/arms.py::_write_config` has this same latent bug**: it writes arm configs into
+   an arbitrary `out_dir`. It hasn't bitten only because the notebook uses root-level configs.
+3. **Sentinels get paraphrased.** `GATEWAY-HINT-7F3A` came back as `GATEWAY-7F3A`, so a
+   substring match reported a hint the model had quoted in full as never seen. Use one
+   unbroken token.
+4. **Task closedness is an experimental variable.** An open-ended task forced the suggested
+   tool in *both* arms (no headroom); a closed one removed the agent's reason to comply.
+   Same treatment, opposite readings.
+
+---
+
+## 6 · Next steps
+
+**The decision the project now faces:** is there a personalization product here, or is the
+control plane the product? Promotion is closed on every semantic channel; what remains is
+structural, and each structural lever costs something.
+
+### Unblocked, cheap, decisive
+
+1. **⭐ Probe arm B's core assumption** (~$0.07). Advertise a small core + `find_tools`; give
+   a task needing a withheld tool; return its real schema; **watch whether a `tools/call`
+   arrives at the gateway.** Our side is ready — `Gateway.call_tool` routes by parsed name
+   without consulting `_exposed`, precisely so this is servable and loggable. Wiring needs
+   two edits: advertise the meta-tool in `list_tools`, and branch on `server_id ==
+   "_gateway"` in `call_tool` before reaching the pool.
+   - **call arrives** → arm B is real; `find_tools` + ranker + bandit is viable with **no
+     collection and no cache cost**, and `was_exposed: false` comes alive
+   - **no call** → registration is required, so arm B becomes `find_tools` + `list_changed`,
+     gated on step 2
+   - **agent uses built-in ToolSearch instead** → routing must be solved first
+2. **Measure `list_changed`'s cache cost** — only if step 1 fails. Needs a minimal
+   implementation: `mcp.types.ToolListChangedNotification` exists but `MCPServer` exposes no
+   send method, so it needs plumbing to the session. `ArmResult` already captures
+   `cache_creation_tokens` / `cache_read_tokens`, so the measurement itself is free.
+3. **Fix `bench/arms.py::_write_config`** (§5.2) before anyone calls `build_arms` for real.
+4. **Run arm R once** (~$0.07). The null control has **zero** data. If the harness cannot
+   separate random from anything, later numbers are noise.
+
+### Free, no model calls
+
+5. **B-variant replay** — score coverage of a session's *remaining* calls given the first
+   _k_ observed. Tests whether within-session evidence beats point-A prediction, on
+   existing logs.
+6. **Capture call status into `DecisionContext`** — `server.py:89` appends only
+   `(server_id, name)` and drops `status`, so `errors_seen` has no data source.
+7. **Fix lossy persistence** — `results/arms_smoke.json` keeps only `rate`: no reps, no
+   passes, no `answer`. `answer` is the only replacement for the dead capture-rate signal (§2f).
+
+### Blocked on the human
+
+8. **Collection is still the bottleneck, and still degenerate: 27 sessions, 23 in this
+   repo.** No probe, lever, or refactor touches it. Every personalization claim is
+   unmeasurable until there is varied traffic. **If that traffic is not going to
+   materialise, decide that deliberately** — the control plane (exposure log, entitlement,
+   dead-weight reporting) needs none of it.
+
+### Doc debt
+
+9. The arms in `roadmap.md`, the baseline ladder, and the frontier framing all assume
+   cutting. Snapshot 6 names arm C as the challenger. A **Snapshot 7** should record §2's
+   findings and the arm-B rediscovery — snapshots are immutable, so append, don't edit.
+
+---
+
+## 7 · How to run things
 
 ```sh
 # tests
 uv run --extra dev --extra gateway pytest -q
 
-# harvest the catalog (add --extra tokens --count-tokens once the account is funded)
-set -a; . ./.env; set +a
-uv run --extra gateway python -m mcp_gateway_router.harvest --config gateway.json --out results/catalog.json
-
-# Q2 — free, no model calls
-uv run --extra gateway python -m mcp_gateway_router.replay.run --engine mymodule:my_factory
-
-# Q1 gate check (subscription auth; ANTHROPIC_API_KEY must be UNSET)
+# either probe (subscription auth; ANTHROPIC_API_KEY must be UNSET)
 cd /tmp && env -u ANTHROPIC_API_KEY uv run --directory <repo> \
-  --with claude-agent-sdk --extra gateway python -m mcp_gateway_router.bench.task0
+    --with claude-agent-sdk --extra gateway \
+    python -m mcp_gateway_router.bench.probe_descriptions   # or probe_suggestions
+
+# Q2 replay — free, no model calls
+uv run --extra gateway python -m mcp_gateway_router.replay.run --engine mymodule:my_factory
 ```
 
-**Writing an engine** — a factory taking prior sessions, returning the existing `Selector`
-protocol:
-
-```python
-def my_factory(history):            # Sequence[SessionRecord]
-    class Engine:
-        name = "my-engine"
-        def select(self, context, catalog, budget, counter):
-            # context.environment -> project/repo/branch/hour/weekday
-            # context.task is None at point A
-            return [...]            # list[Tool]
-    return Engine()
-```
-
----
-
-## 6 · ✅ The contradiction is resolved — finding (a) holds
-
-_Closed 2026-08-10. Full writeup in `gateway-setup.md` § *Probe results* 4._
-
-The two `/context` readings were measuring different things. **34.3k is the schema mass
-held back, not a charge against the prefix.** What deferral actually costs is the name
-list: 95 tools = 3,858 chars ≈ **420 tokens**, against 135,514 chars ≈ 34-39k if loaded.
-A **35× spread**.
-
-The probe already contained the independent check: **dropping 91 of 95 tools moved the
-prefix by 405 tokens**, and the full 95-tool prefix (31,893) is smaller than the schema
-mass alone. The schemas were never in the prefix.
-
-So cutting 95 → 25 saves **~310 tokens**. There is no token argument for cutting at this
-catalog size, Gate 0 stays framed on selection quality, and §3(a) needs no revision.
-
-```sh
-uv run python -m mcp_gateway_router.deferral --catalog results/catalog.json
-```
-
-⚠️ `count_tokens` is still blocked (zero balance), so the *loaded* absolutes are
-chars/token estimates. The 35× ratio is exact and the deferred side is probe-anchored, so
-the conclusion doesn't move — but re-run once funded.
-
----
-
-## 7 · Traps that already cost time
-
-Full list in `session-handoff.md` § *Gotchas*. The five most expensive:
-
-- **`claude mcp list` is the only trustworthy check.** Config files lie — scopes merge
-  (user / local / `.mcp.json`), and `~/.mcp.json` applies to *every* subdirectory. This is
-  why an early "isolated" test directory was not isolated, and it invalidated a round of
-  data.
-- **`env=None` on `StdioServerParameters` is not "inherit".** The MCP SDK substitutes a
-  sanitised default (`HOME/LOGNAME/PATH/SHELL/TERM/USER`). Launching the gateway through
-  it without `spec.env` **silently serves the default config**.
-- **An MCP session must be owned by one task** — anyio cancel scopes. `runner.py` parks
-  the contexts in a dedicated task; don't "simplify" it to an `AsyncExitStack`.
-- **`ToolSearch` is a client `ToolUseBlock`**, not a `ServerToolUseBlock`. Instrumenting
-  the SDK's server-tool enum counts zero searches.
-- **Notion `update_content`:** leading tabs on the first line of `new_str` make the whole
-  edit a **silent no-op**; raw `<table>` markup kills it entirely; new blocks land at
-  `anchor_depth − 1 + tabs`, so every new snapshot needs one manual drag.
-
----
-
-## 8 · Where the writing lives
-
-- **Notion** *🔌 Personalizing MCP Tool Exposure* — decision log (newest first),
-  Architecture snapshots 3–5, an intuitions glossary, and two mermaid diagrams under
-  *🧭 How it actually fits together*. Snapshots 4 and 5 each need one manual drag out of
-  the intro callout.
-- **Repo** — `gateway-setup.md` (setup, measured catalog, probe results),
-  `intuitions.md` (plain-language glossary), `algorithm.md` (target ranker),
-  `superpowers/specs/2026-08-08-mvp-gateway-design.md` (the v0 spec),
-  `superpowers/plans/2026-08-08-gateway-data-plane.md` (plan 1, complete).
+Probe configs are generated beside `gateway.armA.json` as `gateway.probe-*.json` /
+`gateway.suggest-*.json`, and are gitignored.
