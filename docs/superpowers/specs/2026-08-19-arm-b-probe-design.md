@@ -146,12 +146,18 @@ Summing them buries the rare one under the common one.
 **Why not an additive `disclosed_via` field.** It preserves a field whose `false` value then
 means two things, forcing every consumer to remember a compound condition.
 
-**Migration.** `was_exposed` is read in exactly two source lines (`server.py:147`,
-`log.py:140`) and six test sites; `replay/` never parses it. The 28 existing log files keep the
-old field and are all `true` (i.e. all `listed`). A three-line normalizer in
-`replay/sessions.py` maps `was_exposed → exposure` on read, so downstream code only ever sees
-one field name. `log.py`'s module docstring — which lists `was_exposed` among three
-non-retrofittable fields — is rewritten to describe the three states and why they are distinct.
+**Migration — none needed.** `was_exposed` is written in one place (`log.py:140`), set in one
+place (`server.py:147`), and asserted at six test sites. **Nothing reads it**: `load_sessions`
+parses only `tool_uid` from a call record (`replay/sessions.py:112-116`). The 28 existing log
+files keep the old field and are all `true` (i.e. all `listed`).
+
+An earlier draft of this spec called for a normalizer in `replay/sessions.py` mapping
+`was_exposed → exposure` on read. That was dropped: with no consumer it would be dead code
+written to satisfy a document. The first reader that actually needs both vocabularies should
+add the mapping, with a test, at that point.
+
+`log.py`'s module docstring — which lists `was_exposed` among three non-retrofittable fields —
+is rewritten to describe the three states and why they are distinct.
 
 ## 6 · The probe
 
