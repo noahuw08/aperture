@@ -88,6 +88,13 @@ class MetaTools:
         if name != FIND_TOOLS:
             return f"{SENTINEL} no meta-tool named {name!r}.", set()
 
+        if not isinstance(arguments, dict):
+            return (
+                f"{SENTINEL} find_tools requires arguments to be a dict; got "
+                f"{type(arguments).__name__}. Pass an empty dict if no arguments are needed.",
+                set(),
+            )
+
         query = arguments.get("query")
         if not isinstance(query, str) or not query.strip():
             return (

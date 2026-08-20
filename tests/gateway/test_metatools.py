@@ -118,7 +118,7 @@ def test_a_raising_scorer_degrades_to_an_honest_message():
 def test_call_never_raises_whatever_the_arguments():
     meta = MetaTools(enabled=True)
 
-    for arguments in ({}, {"query": None}, {"query": ""}, {"query": 7}):
+    for arguments in ({}, {"query": None}, {"query": ""}, {"query": 7}, None, []):
         text, disclosed = meta.call(FIND_TOOLS, arguments, _catalog())
         assert isinstance(text, str)
         assert isinstance(disclosed, set)
