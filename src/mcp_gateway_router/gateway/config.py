@@ -68,6 +68,11 @@ def _expand(value: str, where: str, extra_env: dict[str, str] | None = None) -> 
 # when the tool's own name contains a double underscore.
 NAMESPACE_SEP = "__"
 
+# The server id the gateway answers for itself. Reserved: an upstream using it would
+# shadow the meta-tool namespace, and calls meant for find_tools would route to a real
+# server instead.
+GATEWAY_SERVER_ID = "_gateway"
+
 
 @dataclass(frozen=True)
 class UpstreamSpec:
@@ -130,6 +135,18 @@ class GatewayConfig:
     result_suggestions: dict[str, str] = field(
         default_factory=dict, hash=False, compare=True
     )
+    #: Whether to advertise the ``find_tools`` meta-tool alongside the selected set.
+    #:
+    #: Default off. This changes what the client sees, so every arm that predates it
+    #: must be unaffected — otherwise arm A's numbers stop being comparable across the
+    #: change that introduced arm B.
+    find_tools_enabled: bool = False
+    #: How many tool schemas ``find_tools`` returns per call.
+    #:
+    #: Swept offline across 0.176 → 0.549 satisfied, so this is a real parameter and
+    #: not a detail. 5 is a probe default, not a justified production value — a default
+    #: chosen from our own chart would be circular.
+    find_tools_k: int = 5
 
     @classmethod
     def from_file(cls, path: Path) -> "GatewayConfig":
@@ -148,6 +165,10 @@ class GatewayConfig:
             if NAMESPACE_SEP in server_id:
                 raise ValueError(
                     f"server_id {server_id!r} may not contain {NAMESPACE_SEP!r}"
+                )
+            if server_id == GATEWAY_SERVER_ID:
+                raise ValueError(
+                    f"server_id {server_id!r} is reserved for the gateway's own meta-tools"
                 )
             if server_id in seen:
                 raise ValueError(f"duplicate server_id: {server_id!r}")
@@ -211,4 +232,6 @@ class GatewayConfig:
                 str(k): str(v)
                 for k, v in (payload.get("result_suggestions") or {}).items()
             },
+            find_tools_enabled=bool((payload.get("find_tools") or {}).get("enabled", False)),
+            find_tools_k=int((payload.get("find_tools") or {}).get("k", 5)),
         )

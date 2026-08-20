@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from mcp_gateway_router.gateway.config import GatewayConfig, UpstreamSpec
+from mcp_gateway_router.gateway.config import GATEWAY_SERVER_ID, GatewayConfig, UpstreamSpec
 
 
 def _payload(**overrides):
@@ -261,4 +261,47 @@ def test_duplicate_server_ids_are_rejected(tmp_path):
     )
 
     with pytest.raises(ValueError, match="duplicate"):
+        GatewayConfig.from_file(path)
+
+
+def _write(tmp_path, payload):
+    path = tmp_path / "gateway.json"
+    path.write_text(json.dumps(payload))
+    return path
+
+
+def test_find_tools_is_disabled_by_default(tmp_path):
+    """Every existing arm and all 28 collected sessions must behave identically."""
+    path = _write(tmp_path, {"upstreams": [{"server_id": "github", "command": "x"}]})
+
+    config = GatewayConfig.from_file(path)
+
+    assert config.find_tools_enabled is False
+    assert config.find_tools_k == 5
+
+
+def test_find_tools_block_is_read(tmp_path):
+    path = _write(
+        tmp_path,
+        {
+            "upstreams": [{"server_id": "github", "command": "x"}],
+            "find_tools": {"enabled": True, "k": 3},
+        },
+    )
+
+    config = GatewayConfig.from_file(path)
+
+    assert config.find_tools_enabled is True
+    assert config.find_tools_k == 3
+
+
+def test_an_upstream_may_not_claim_the_gateway_namespace(tmp_path):
+    """`_gateway` addresses the meta-tool. An upstream with that id would shadow it,
+    and calls meant for find_tools would route to a real server."""
+    path = _write(
+        tmp_path,
+        {"upstreams": [{"server_id": GATEWAY_SERVER_ID, "command": "x"}]},
+    )
+
+    with pytest.raises(ValueError, match=GATEWAY_SERVER_ID):
         GatewayConfig.from_file(path)
