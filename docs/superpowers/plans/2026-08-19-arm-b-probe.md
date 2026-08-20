@@ -223,7 +223,7 @@ This is a placeholder shape — Task 4 replaces it with `self._exposure(key)`. I
 `tests/gateway/test_result_suggestions.py:142` → change the tuple's middle element from `True` to `"listed"` and the key from `c["was_exposed"]` to `c["exposure"]`
 `tests/replay/test_sessions.py:34` → `"exposure": "listed",`
 
-Rename `test_calling_an_unexposed_tool_is_logged_as_a_miss` is unnecessary — the name is still accurate. Rename `test_was_exposed_survives_a_rewrite` in `test_description_overrides.py:100` to `test_exposure_survives_a_rewrite`, and update its docstring's first line to `"""``exposure`` keys on identity, so a rewritten tool must still read as listed.`"""
+Leave `test_calling_an_unexposed_tool_is_logged_as_a_miss` named as it is — still accurate. Rename `test_was_exposed_survives_a_rewrite` in `test_description_overrides.py:100` to `test_exposure_survives_a_rewrite`, and change its docstring's first line to: `` `exposure` keys on identity, so a rewritten tool must still read as listed. ``
 
 - [ ] **Step 6: Run the full suite**
 
@@ -424,10 +424,6 @@ Pure tests: a hand-built ``Catalog``, no pool, no transport, no SDK, no subproce
 That isolation is the reason this is a module rather than a branch inside
 ``Gateway.call_tool``.
 """
-
-import json
-
-import pytest
 
 from mcp_gateway_router.catalog import Catalog, Tool
 from mcp_gateway_router.gateway.config import GATEWAY_SERVER_ID
