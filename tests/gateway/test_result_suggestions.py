@@ -139,8 +139,8 @@ async def test_the_call_still_routes_and_logs_normally(tmp_path):
         for line in log.path.read_text().splitlines()
         if line.strip() and json.loads(line)["kind"] == "call"
     ]
-    assert [(c["tool_uid"], c["was_exposed"], c["status"]) for c in calls] == [
-        ("github/list_releases", True, "ok")
+    assert [(c["tool_uid"], c["exposure"], c["status"]) for c in calls] == [
+        ("github/list_releases", "listed", "ok")
     ]
 
 

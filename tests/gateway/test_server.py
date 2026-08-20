@@ -104,7 +104,7 @@ async def test_calling_an_unexposed_tool_is_logged_as_a_miss(tmp_path):
     log.close()
 
     calls = [r for r in _records(log.path) if r["kind"] == "call"]
-    assert calls[0]["was_exposed"] is False
+    assert calls[0]["exposure"] == "unexposed"
 
 
 async def test_calling_an_exposed_tool_is_logged_as_a_hit(tmp_path):
@@ -115,7 +115,7 @@ async def test_calling_an_exposed_tool_is_logged_as_a_hit(tmp_path):
     log.close()
 
     calls = [r for r in _records(log.path) if r["kind"] == "call"]
-    assert calls[0]["was_exposed"] is True
+    assert calls[0]["exposure"] == "listed"
     assert calls[0]["status"] == "ok"
 
 

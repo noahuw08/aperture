@@ -97,8 +97,8 @@ async def test_a_rewritten_tool_keeps_its_identity_and_still_routes(tmp_path):
     assert sessions["github"].calls == [("get_me", {})]
 
 
-async def test_was_exposed_survives_a_rewrite(tmp_path):
-    """``was_exposed`` keys on identity, so a rewritten tool must still read as exposed.
+async def test_exposure_survives_a_rewrite(tmp_path):
+    """`exposure` keys on identity, so a rewritten tool must still read as listed.
 
     Recorded as a test because the natural implementation — building ``_exposed`` from
     the rewritten list — would also pass every other test here while silently making
@@ -113,7 +113,7 @@ async def test_was_exposed_survives_a_rewrite(tmp_path):
         for line in log.path.read_text().splitlines()
         if line.strip() and json.loads(line)["kind"] == "call"
     ]
-    assert [c["was_exposed"] for c in calls] == [True]
+    assert [c["exposure"] for c in calls] == ["listed"]
 
 
 async def test_an_override_for_an_absent_tool_is_ignored(tmp_path):

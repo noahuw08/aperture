@@ -23,7 +23,7 @@ from ..catalog import Tool
 from ..selector import DecisionContext
 from .config import GatewayConfig
 from .environment import safe_capture_environment
-from .log import ExposureLog
+from .log import EXPOSURE_LISTED, EXPOSURE_UNEXPOSED, ExposureLog
 from .naming import advertised_name, parse_advertised
 from .policy import Policy
 from .selectors import build_selector
@@ -144,7 +144,7 @@ class Gateway:
             self._log.call(
                 session_id=self._session_id,
                 tool_uid=f"{server_id}/{tool_name}",
-                was_exposed=key in self._exposed,
+                exposure=EXPOSURE_LISTED if key in self._exposed else EXPOSURE_UNEXPOSED,
                 status=status,
                 latency_ms=int((time.monotonic() - started) * 1000),
             )

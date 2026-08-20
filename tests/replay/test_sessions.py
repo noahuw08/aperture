@@ -31,7 +31,7 @@ def _call(session_id, ts, tool_uid, status="ok"):
         "ts": ts,
         "session_id": session_id,
         "tool_uid": tool_uid,
-        "was_exposed": True,
+        "exposure": "listed",
         "status": status,
         "latency_ms": 5,
     }

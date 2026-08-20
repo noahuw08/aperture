@@ -9,8 +9,12 @@ retrofittable** — their absence cannot be reconstructed from later data:
 ``propensity``            the probability this tool was exposed on this decision. 1.0
                           for every deterministic arm; recorded anyway, because it is
                           the field's absence that cannot be undone, not its value.
-``was_exposed``           whether a called tool was in the advertised set. The only
-                          direct evidence of demand for tools we are not serving.
+``exposure``              ``listed`` (was in the tools/list array), ``disclosed``
+                          (handed over by find_tools), or ``unexposed``. Only the
+                          last is a miss. Collapsing the first two into a boolean
+                          would mean a working find_tools floods the miss channel
+                          with its own successes and destroys the signal in the same
+                          feature that creates it.
 ``cached_input_tokens``   prompt-cache behaviour, and therefore the invalidation cost
                           of changing the tool list.
 """
@@ -23,6 +27,15 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+#: A called tool was in the ``tools/list`` array.
+EXPOSURE_LISTED = "listed"
+#: A called tool was handed to the model by ``find_tools``. Arm B working as designed.
+EXPOSURE_DISCLOSED = "disclosed"
+#: Neither. The true miss — the point-A ranker was wrong.
+EXPOSURE_UNEXPOSED = "unexposed"
+
+EXPOSURES = (EXPOSURE_LISTED, EXPOSURE_DISCLOSED, EXPOSURE_UNEXPOSED)
 
 
 @dataclass(frozen=True)
@@ -127,21 +140,37 @@ class ExposureLog:
         *,
         session_id: str,
         tool_uid: str,
-        was_exposed: bool,
+        exposure: str,
         status: str,
         latency_ms: int,
+        query: str | None = None,
+        disclosed: list[str] | None = None,
     ) -> None:
-        self._write(
-            {
-                "kind": "call",
-                "ts": _now(),
-                "session_id": session_id,
-                "tool_uid": tool_uid,
-                "was_exposed": was_exposed,
-                "status": status,
-                "latency_ms": latency_ms,
-            }
-        )
+        """One tool call.
+
+        ``query`` and ``disclosed`` are written only for meta-tool calls, where they
+        are the whole point: the query is the task-grain text decision point A cannot
+        see, and pairing it with what was disclosed — and then with which of those the
+        model went on to call — is what makes the record training data rather than an
+        audit trail.
+        """
+        if exposure not in EXPOSURES:
+            raise ValueError(f"unknown exposure {exposure!r}; expected one of {EXPOSURES}")
+
+        record: dict[str, Any] = {
+            "kind": "call",
+            "ts": _now(),
+            "session_id": session_id,
+            "tool_uid": tool_uid,
+            "exposure": exposure,
+            "status": status,
+            "latency_ms": latency_ms,
+        }
+        if query is not None:
+            record["query"] = query
+        if disclosed is not None:
+            record["disclosed"] = disclosed
+        self._write(record)
 
     def turn(
         self,

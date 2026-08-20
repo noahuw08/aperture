@@ -1,6 +1,13 @@
 import json
 
-from mcp_gateway_router.gateway.log import ExposedTool, ExposureLog
+import pytest
+
+from mcp_gateway_router.gateway.log import (
+    EXPOSURE_DISCLOSED,
+    EXPOSURE_LISTED,
+    ExposedTool,
+    ExposureLog,
+)
 
 
 def _records(log):
@@ -33,13 +40,13 @@ def test_decision_record_carries_propensity_and_token_cost(tmp_path):
     assert record["exposed"][0]["token_cost"] == 180
 
 
-def test_call_record_carries_was_exposed(tmp_path):
+def test_call_record_carries_a_three_state_exposure(tmp_path):
     log = ExposureLog(tmp_path, session_id="s1")
 
     log.call(
         session_id="s1",
         tool_uid="notion/search@bb",
-        was_exposed=False,
+        exposure=EXPOSURE_DISCLOSED,
         status="error",
         latency_ms=12,
     )
@@ -47,8 +54,67 @@ def test_call_record_carries_was_exposed(tmp_path):
 
     (record,) = _records(log)
     assert record["kind"] == "call"
-    assert record["was_exposed"] is False
+    assert record["exposure"] == "disclosed"
     assert record["status"] == "error"
+    assert "was_exposed" not in record
+
+
+def test_an_unknown_exposure_state_is_rejected(tmp_path):
+    """A typo must not become a silent fourth state.
+
+    The whole point of the enum is that `disclosed` and `unexposed` mean different
+    things downstream; a misspelling that lands in the log unchallenged would be
+    indistinguishable from real data months later.
+    """
+    log = ExposureLog(tmp_path, session_id="s1")
+
+    with pytest.raises(ValueError):
+        log.call(
+            session_id="s1",
+            tool_uid="notion/search@bb",
+            exposure="maybe",
+            status="ok",
+            latency_ms=1,
+        )
+    log.close()
+
+
+def test_find_tools_records_carry_the_query_and_what_it_disclosed(tmp_path):
+    log = ExposureLog(tmp_path, session_id="s1")
+
+    log.call(
+        session_id="s1",
+        tool_uid="_gateway/find_tools",
+        exposure=EXPOSURE_LISTED,
+        status="ok",
+        latency_ms=3,
+        query="recent releases",
+        disclosed=["github/list_releases", "github/get_latest_release"],
+    )
+    log.close()
+
+    (record,) = _records(log)
+    assert record["query"] == "recent releases"
+    assert record["disclosed"] == ["github/list_releases", "github/get_latest_release"]
+
+
+def test_ordinary_calls_omit_the_meta_fields(tmp_path):
+    """Absent, not null. A `query: null` on every upstream call is noise in a file
+    that is read by eye as often as by code."""
+    log = ExposureLog(tmp_path, session_id="s1")
+
+    log.call(
+        session_id="s1",
+        tool_uid="github/list_releases",
+        exposure=EXPOSURE_LISTED,
+        status="ok",
+        latency_ms=5,
+    )
+    log.close()
+
+    (record,) = _records(log)
+    assert "query" not in record
+    assert "disclosed" not in record
 
 
 def test_turn_record_separates_cached_input_tokens(tmp_path):
