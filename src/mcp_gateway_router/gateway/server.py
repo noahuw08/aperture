@@ -23,7 +23,8 @@ from ..catalog import Tool
 from ..selector import DecisionContext
 from .config import GatewayConfig
 from .environment import safe_capture_environment
-from .log import EXPOSURE_LISTED, EXPOSURE_UNEXPOSED, ExposureLog
+from .log import EXPOSURE_DISCLOSED, EXPOSURE_LISTED, EXPOSURE_UNEXPOSED, ExposureLog
+from .metatools import MetaTools
 from .naming import advertised_name, parse_advertised
 from .policy import Policy
 from .selectors import build_selector
@@ -39,14 +40,22 @@ class Gateway:
         pool: UpstreamPool,
         policy: Policy,
         log: ExposureLog,
+        meta: MetaTools | None = None,
     ) -> None:
         self._config = config
         self._pool = pool
         self._policy = policy
         self._log = log
+        self._meta = meta or MetaTools(
+            k=config.find_tools_k, enabled=config.find_tools_enabled
+        )
         # Take the id from the log so the filename and the records agree.
         self._session_id = log.session_id
         self._exposed: set[tuple[str, str]] = set()
+        # Tools handed to the model by a meta-tool. Kept apart from `_exposed` on
+        # purpose: merging them would make every successful disclosure read as a miss.
+        self._disclosed: set[tuple[str, str]] = set()
+        self._catalog = None
         self._called: list[tuple[str, str]] = []
         # Captured once per session: it describes the session, not the request, and
         # the git lookups shouldn't run on every tools/list.
@@ -93,10 +102,14 @@ class Gateway:
 
     async def list_tools(self) -> list[Tool]:
         catalog = await self._pool.aggregate()
+        # Held for find_tools, which searches the same catalog the selector cut from.
+        self._catalog = catalog
         exposed = self._policy.decide(catalog, self._pool.catalog_hash(), self._context())
-        # Keys, not rewritten tools: `was_exposed` must survive a description change.
+        # Keys, not rewritten tools: exposure must survive a description change.
         self._exposed = {t.key for t in exposed}
-        return self._rewrite(exposed)
+        # Appended after selection and never a Catalog member, so the selector cannot
+        # score or cut it and `n_candidates` / `catalog_hash` are unaffected.
+        return self._rewrite(exposed) + self._meta.advertise()
 
     def _augment(self, result: Any, key: tuple[str, str]) -> Any:
         """Append a gateway suggestion to a tool result.
@@ -128,12 +141,58 @@ class Gateway:
             logger.warning("could not attach suggestion to %s/%s result", *key)
         return result
 
+    def _exposure(self, key: tuple[str, str]) -> str:
+        """Which of the three states a called tool was in.
+
+        ``listed`` wins over ``disclosed``: a tool in the advertised set was available
+        whether or not find_tools also happened to return it.
+        """
+        if key in self._exposed or self._meta.handles(key[0]):
+            return EXPOSURE_LISTED
+        if key in self._disclosed:
+            return EXPOSURE_DISCLOSED
+        return EXPOSURE_UNEXPOSED
+
+    async def _call_meta(self, tool_name: str, arguments: dict):
+        """Serve a meta-tool. Returns (result, query, disclosed uids).
+
+        Wrapped even though ``MetaTools.call`` is documented never to raise — this sits
+        in the critical path of a live session, and a bug here must degrade the call
+        rather than the client.
+        """
+        if self._catalog is None:
+            self._catalog = await self._pool.aggregate()
+        try:
+            text, disclosed = self._meta.call(tool_name, arguments, self._catalog)
+        except Exception:
+            logger.exception("meta-tool %s failed", tool_name)
+            return self._as_result("find_tools failed unexpectedly."), None, None
+
+        self._disclosed |= disclosed
+        query = arguments.get("query")
+        return (
+            self._as_result(text),
+            query if isinstance(query, str) else "",
+            sorted(f"{s}/{n}" for s, n in disclosed),
+        )
+
+    @staticmethod
+    def _as_result(text: str):
+        from mcp.types import CallToolResult, TextContent
+
+        return CallToolResult(content=[TextContent(type="text", text=text)])
+
     async def call_tool(self, advertised: str, arguments: dict) -> Any:
         server_id, tool_name = parse_advertised(advertised)
         key = (server_id, tool_name)
         started = time.monotonic()
         status = "ok"
+        query: str | None = None
+        disclosed: list[str] | None = None
         try:
+            if self._meta.handles(server_id):
+                result, query, disclosed = await self._call_meta(tool_name, arguments)
+                return result
             result = await self._pool.call(server_id, tool_name, arguments)
             return self._augment(result, key)
         except Exception:
@@ -144,9 +203,11 @@ class Gateway:
             self._log.call(
                 session_id=self._session_id,
                 tool_uid=f"{server_id}/{tool_name}",
-                exposure=EXPOSURE_LISTED if key in self._exposed else EXPOSURE_UNEXPOSED,
+                exposure=self._exposure(key),
                 status=status,
                 latency_ms=int((time.monotonic() - started) * 1000),
+                query=query,
+                disclosed=disclosed,
             )
 
 
@@ -228,7 +289,13 @@ async def serve(config_path: Path) -> None:
 
     selector = build_selector(config.selector, config.pinned)
     policy = Policy(config, selector, counter, log)
-    gateway = Gateway(config, pool, policy, log)
+    gateway = Gateway(
+        config,
+        pool,
+        policy,
+        log,
+        MetaTools(k=config.find_tools_k, enabled=config.find_tools_enabled),
+    )
     app = build_app(gateway)
 
     try:
