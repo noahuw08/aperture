@@ -8,12 +8,14 @@ other test while destroying the one field the missing-demand signal depends on.
 
 import json
 
+import pytest
+
 from mcp_gateway_router.gateway.config import GatewayConfig, UpstreamSpec
 from mcp_gateway_router.gateway.log import ExposureLog
 from mcp_gateway_router.gateway.metatools import FIND_TOOLS, SENTINEL, MetaTools
 from mcp_gateway_router.gateway.policy import Policy
 from mcp_gateway_router.gateway.server import Gateway
-from mcp_gateway_router.gateway.upstream import UpstreamPool
+from mcp_gateway_router.gateway.upstream import UnknownUpstreamError, UpstreamPool
 from mcp_gateway_router.tokens import StaticTokenCounter
 
 
@@ -172,20 +174,40 @@ async def test_a_meta_call_never_reaches_the_pool(tmp_path):
     assert sessions["github"].calls == []
 
 
+async def test_a_meta_call_works_before_any_list_tools(tmp_path):
+    """The cold path: `_call_meta` fetches the catalog itself via
+    ``self._pool.aggregate()`` when `list_tools` hasn't run yet. The sibling test
+    above warms `_catalog` with a `list_tools()` call first and so never exercises
+    this branch; `FakeSession.calls` only records `call_tool`, so it also confirms
+    the aggregate-only fetch never reaches the pool's call path."""
+    gateway, sessions, log = await _gateway(tmp_path)
+
+    result = await gateway.call_tool(f"_gateway__{FIND_TOOLS}", {"query": "does b"})
+    log.close()
+
+    assert SENTINEL in result.content[0].text
+    assert sessions["github"].calls == []
+
+
 async def test_disabled_is_unchanged(tmp_path):
     """Byte-for-byte the old behaviour: no meta-tool advertised, and a call addressed
     to it routes to the pool and fails as an unknown upstream."""
     gateway, _, log = await _gateway(tmp_path, find_tools=False)
 
     tools = await gateway.list_tools()
+    with pytest.raises(UnknownUpstreamError):
+        await gateway.call_tool(f"_gateway__{FIND_TOOLS}", {"query": "does b"})
     log.close()
 
     assert [f"{t.server_id}__{t.name}" for t in tools] == ["github__a"]
 
 
 async def test_exposure_survives_a_disclosure_and_a_rewrite_together(tmp_path):
-    """Pins the old invariant and the new one at once: `_exposed` keys on pre-rewrite
-    identity, and disclosure is a separate set that does not contaminate it."""
+    """Pins the description-rewrite invariant (`_exposed` keys on pre-rewrite
+    identity, so a rewritten tool's call still resolves as `listed`) in the
+    presence of an unrelated disclosure. It does not by itself demonstrate that
+    disclosure cannot contaminate `_exposed` — `test_disclosed_is_not_folded_into_exposed`
+    below is what pins that, directly on the sets."""
     gateway, _, log = await _gateway(
         tmp_path, overrides={"github/a": "totally different text"}
     )
@@ -196,3 +218,22 @@ async def test_exposure_survives_a_disclosure_and_a_rewrite_together(tmp_path):
     log.close()
 
     assert _calls(log)[1]["exposure"] == "listed"
+
+
+async def test_disclosed_is_not_folded_into_exposed(tmp_path):
+    """The invariant, pinned directly on the sets rather than on a label.
+
+    A merged implementation (`self._exposed |= disclosed` in `_call_meta`, instead
+    of `self._disclosed |= disclosed`) still logs `github/a` as `listed` and
+    `github/b` as `disclosed` on the very next call — every test above this one
+    passes under that bug. `k=1` and a query that matches only `b` make the
+    disclosed set exactly `{("github", "b")}`, so a merge is visible directly on
+    `_exposed` without needing a second call to surface it."""
+    gateway, _, log = await _gateway(tmp_path, k=1)
+    await gateway.list_tools()
+
+    await gateway.call_tool(f"_gateway__{FIND_TOOLS}", {"query": "does b"})
+    log.close()
+
+    assert gateway._exposed == {("github", "a")}
+    assert gateway._disclosed == {("github", "b")}

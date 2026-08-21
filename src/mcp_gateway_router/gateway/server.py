@@ -21,10 +21,10 @@ from typing import Any
 
 from ..catalog import Tool
 from ..selector import DecisionContext
-from .config import GatewayConfig
+from .config import GATEWAY_SERVER_ID, GatewayConfig
 from .environment import safe_capture_environment
 from .log import EXPOSURE_DISCLOSED, EXPOSURE_LISTED, EXPOSURE_UNEXPOSED, ExposureLog
-from .metatools import MetaTools
+from .metatools import FIND_TOOLS, MetaTools
 from .naming import advertised_name, parse_advertised
 from .policy import Policy
 from .selectors import build_selector
@@ -146,8 +146,13 @@ class Gateway:
 
         ``listed`` wins over ``disclosed``: a tool in the advertised set was available
         whether or not find_tools also happened to return it.
+
+        Compares full identity — ``key == (GATEWAY_SERVER_ID, FIND_TOOLS)`` — rather
+        than just ``key[0] == GATEWAY_SERVER_ID``. A server-id-only check would call a
+        request for a hallucinated meta-tool name "listed", recording a genuine miss
+        as a hit and polluting the exposed/disclosed split it exists to protect.
         """
-        if key in self._exposed or self._meta.handles(key[0]):
+        if key in self._exposed or key == (GATEWAY_SERVER_ID, FIND_TOOLS):
             return EXPOSURE_LISTED
         if key in self._disclosed:
             return EXPOSURE_DISCLOSED
@@ -158,11 +163,14 @@ class Gateway:
 
         Wrapped even though ``MetaTools.call`` is documented never to raise — this sits
         in the critical path of a live session, and a bug here must degrade the call
-        rather than the client.
+        rather than the client. The catalog fetch is inside the same ``try``: a cold
+        call (find_tools before any ``tools/list``) triggers ``self._pool.aggregate()``
+        here, and a failure there must degrade the same way as a failure in the search
+        itself, not escape past this method's own promise not to raise.
         """
-        if self._catalog is None:
-            self._catalog = await self._pool.aggregate()
         try:
+            if self._catalog is None:
+                self._catalog = await self._pool.aggregate()
             text, disclosed = self._meta.call(tool_name, arguments, self._catalog)
         except Exception:
             logger.exception("meta-tool %s failed", tool_name)
@@ -185,12 +193,13 @@ class Gateway:
     async def call_tool(self, advertised: str, arguments: dict) -> Any:
         server_id, tool_name = parse_advertised(advertised)
         key = (server_id, tool_name)
+        is_meta = self._meta.handles(server_id)
         started = time.monotonic()
         status = "ok"
         query: str | None = None
         disclosed: list[str] | None = None
         try:
-            if self._meta.handles(server_id):
+            if is_meta:
                 result, query, disclosed = await self._call_meta(tool_name, arguments)
                 return result
             result = await self._pool.call(server_id, tool_name, arguments)
@@ -199,7 +208,11 @@ class Gateway:
             status = "error"
             raise
         finally:
-            self._called.append(key)
+            # `_called` feeds `DecisionContext.tools_called`, a selector input — only
+            # real catalog tools belong there. A meta call is still logged below, just
+            # not folded into the signal a future selector would read as demand.
+            if not is_meta:
+                self._called.append(key)
             self._log.call(
                 session_id=self._session_id,
                 tool_uid=f"{server_id}/{tool_name}",
