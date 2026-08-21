@@ -18,5 +18,6 @@ runs/*.jsonl
 # Probe configs, derived from a base gateway config at run time
 gateway.probe-*.json
 gateway.suggest-*.json
+gateway.armb-*.json
 # Per-session logs in arm/probe subdirectories (top-level already covered above)
 runs/**/*.jsonl
