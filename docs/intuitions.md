@@ -515,6 +515,81 @@ popularity counter, not a learner. Un-exposed tools generate no evidence, so the
 on day one and never recovers. Explore at session boundaries, not per request — mid-session
 reshuffles cost a full cache invalidation.
 
+### Binding — the thing exploration is actually over
+
+**Plain version.** An engineering task has a fixed shape: locate the symbol → read it → edit
+→ run tests → open the PR. That shape does *not* say which tool satisfies a step. The choice
+of tool for a step is the **binding**, and it's the only thing the exploration is ranging
+over. Never the plan.
+
+**Concrete.** "Locate the symbol" binds to `grep`, or `search_code`, or an LSP
+`find_references`, or an Explore subagent. Same step, same terminal state, one round trip
+against six.
+
+**Why it bites — the objection it answers.** The obvious critique of a personalization layer
+here is *"engineering tasks are structured, so the path is already determined, so exploring
+can only make it worse."* The structure is in the step sequence; the binding is unconstrained
+by it. Two further consequences:
+
+- **Structure is the precondition for the moat, not a threat to it.** Bandits converge when
+  arms recur in a small context space. Recurring step types are what make the per-cell sample
+  counts arrive at all — the [`(user, task)` grain](#the-unit-is-user-task-not-user) claim
+  depends on that recurrence. Unstructured one-off tasks would make personalization hopeless,
+  not safer.
+- **It is where the knapsack's missing `v` lives.** [`fill_budget`](#knapsack-not-top-k)
+  maximises `p·v/c` and nothing supplies `v`. Value is *round trips saved on a step this
+  context will hit*, not `P(called | exposed)`.
+
+### Sequence collapse
+
+**Plain version.** The wins that matter aren't one tool swapped for a better one. They're one
+tool that absorbs a whole run of calls.
+
+**Concrete.** A recurring span — `list_files → get_file_contents ×4 → search_code` — that
+`pull_request_read` subsumes in a single call.
+
+**Why it bites.** It only becomes minable *because* the steps are structured: you can diff a
+span against a candidate binding only when spans recur with recognizable boundaries. And the
+payoff is arithmetic rather than a judgement call — tokens of the collapsed span, minus the
+schema you had to disclose to get it.
+
+### Span reward, not call reward
+
+**Plain version.** Score the cost of getting a *step* done, not the outcome of a single call.
+
+**Why it bites.** The [reward vocabulary](algorithm.md) in `algorithm.md` [6] is per-call:
+*exposed tool called, returned cleanly → +*. That systematically prefers cheap tools that
+need many round trips — a six-call `grep` loop books `+6` against `search_code`'s `+1`, which
+is backwards from the thing the product claims to sell. The unit that matches the claim is
+tokens in + tokens out + turns, from step-open to step-satisfied.
+
+⚠️ Same standing as [propensity](#propensity): cheap to put in the log schema now, expensive
+after it freezes.
+
+### Where the explore flavor still pays
+
+Three cases the fixed shape of a task does nothing to help, so exposure is the only teacher:
+
+- **Cold-start arms.** A newly installed server has no evidence.
+  [Features](#arms-are-features-never-tool-ids) let you *score* a new tool; only a call
+  confirms it.
+- **Drift.** Vendors ship batch endpoints, deprecate, get slow. Structured tasks make drift
+  *detectable* — same step, cost moved — which most bandit settings don't get.
+- **Subpopulation discovery.** The best binding for "locate symbol" varies with repo size,
+  language, whether an LSP is running. A global winner is wrong for a segment, and only
+  exploration reveals the segment exists. That is the personalization claim itself.
+
+### Who pays for exploration
+
+**Plain version.** The fleet explores; the individual seat exploits. Pool a fleet-level prior
+and let each seat's posterior override it only where that seat has the evidence to.
+
+**Why it bites.** It's the answer to *"how does a developer get their task done faster while
+also exploring?"* — mostly they don't explore. Per-seat exploration rate can approach zero
+while the system as a whole still learns quickly. Note this is a **multi-seat** mechanism:
+like the last row of [the n=1 table](#what-personalization-actually-means-at-decision-point-a),
+nothing in a single-seat dogfood tests it.
+
 ### Prompt-cache invalidation
 
 **Plain version.** Change the tool list and the model re-reads and re-bills the whole prefix
@@ -522,6 +597,16 @@ instead of reusing a cached copy.
 
 **Why it bites.** It's the price of every exploration decision, and it is currently an
 unmeasured number blocking the choice of any exploration rate.
+
+**Why [decision point C](#decision-point-c--a-find_tools-call) may dissolve it.** Exploring at
+point A re-bills the prefix, which is why the unmeasured number blocks. If `find_tools`
+discloses through the tool *result* — appended to the message history, not a mutation of the
+`tools` array — then an explore slot in the result set costs only the marginal schema tokens.
+Bounded, known before it's spent, no prefix invalidation. Capped downside against uncapped
+upside, which is a rate you can actually choose.
+
+⚠️ Conditional on which channel arm B lands. The `list_changed` route pays full price and
+this paragraph does not apply to it.
 
 ### OPE, IPS, SNIPS, DR
 
