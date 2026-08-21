@@ -47,6 +47,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..gateway.config import GATEWAY_SERVER_ID
 from ..gateway.metatools import FIND_TOOLS
 from .runner import run_arm
 
@@ -179,7 +180,7 @@ async def probe(
         records = _log_records(base_config, condition)
         decisions = [r for r in records if r.get("kind") == "decision"]
         received = _received(records, TARGET)
-        meta = _received(records, ("_gateway", FIND_TOOLS))
+        meta = _received(records, (GATEWAY_SERVER_ID, FIND_TOOLS))
 
         row = {
             "emitted": _emitted(result, TARGET),
@@ -198,10 +199,9 @@ async def probe(
         }
         results[condition.name] = row
         print(
-            f"  {condition.name:<10} "
-            f"advertised={row['n_advertised']} "
-            f"find_tools={row['find_tools_called']!s:<5} | "
-            f"target: emitted={row['emitted']!s:<5} received={row['received']!s:<5} "
+            f"  {condition.name:<10} {condition.reads:<50} | "
+            f"advertised={row['n_advertised']} find_tools={row['find_tools_called']!s:<5} "
+            f"emitted={row['emitted']!s:<5} received={row['received']!s:<5} "
             f"exposure={row['exposure']}",
             flush=True,
         )
@@ -243,7 +243,22 @@ def _verdict(results: dict) -> str:
             "cache-invalidation cost."
         )
 
-    # The model did not try. The control says whether it could have.
+    # The model did not try. The control says whether it could have. But the control
+    # itself must be readable — its config working and its run complete.
+    if trusted["n_advertised"] not in (len(CORE), None):
+        return (
+            f"UNREADABLE — the trusted condition advertised "
+            f"{trusted['n_advertised']} tools, expected {len(CORE)} (core only, no "
+            f"meta-tool). This is a live-mode or config problem, not a finding about "
+            f"the client. Fix it before rerunning."
+        )
+    if trusted["n_advertised"] is None:
+        return (
+            "UNREADABLE — the trusted condition's gateway config failed to load or "
+            "did not complete a run (no decision records in log). This is a config or "
+            "startup problem, not a finding about the client. Fix it before rerunning."
+        )
+
     if trusted["emitted"] and trusted["received"]:
         return (
             "MODEL DECLINES — the client forwards a call for an unadvertised tool when "
