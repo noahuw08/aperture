@@ -61,13 +61,16 @@ comes back negative. `bench/arms.py::_write_config`'s latent config-path bug (PI
 ### 4.1 · `gateway/metatools.py` — new module
 
 ```python
+# in gateway/config.py, beside NAMESPACE_SEP:
 GATEWAY_SERVER_ID = "_gateway"   # reserved; config rejects an upstream with this id
+
+# in gateway/metatools.py:
 FIND_TOOLS = "find_tools"
 
 Key = tuple[str, str]
 
 class MetaTools:
-    def __init__(self, *, scorer, k: int = 5, enabled: bool = False): ...
+    def __init__(self, *, scorer_factory=None, k: int = 5, enabled: bool = False): ...
 
     def advertise(self) -> list[Tool]:
         """Meta-tools to append to the tools/list array. Empty when disabled."""
@@ -77,6 +80,14 @@ class MetaTools:
     def call(self, name: str, arguments: dict, catalog: Catalog) -> tuple[str, set[Key]]:
         """Returns (result text, keys disclosed). Pure — no I/O, no SDK, no pool."""
 ```
+
+`GATEWAY_SERVER_ID` lives in `config.py` rather than here: it is enforced at config load
+(`_gateway` is a rejected upstream id) and read by `naming`-adjacent code, so putting it beside
+`NAMESPACE_SEP` keeps the reserved-namespace rules in one file and keeps `config.py` from
+importing this module. The constructor takes a **`scorer_factory`**, not a built scorer:
+`LexicalScorer` is constructed *from* a catalog, which does not exist until `tools/list` has
+run, and building it lazily per catalog is what lets a raising constructor degrade to "search
+unavailable" instead of killing startup.
 
 `call` receives the catalog as an **argument** rather than holding a provider, and returns
 **text** rather than a `CallToolResult`. Both keep this module free of I/O and of `mcp`
@@ -275,8 +286,13 @@ the model, so these keep that honest:
    enabling arm B quietly reclassifies every miss as a success.
 4. **`listed` beats `disclosed`.** A core tool that `find_tools` also returns still logs
    `listed`.
-5. **Disabled is byte-identical.** Advertised list and log records unchanged from today,
-   mirroring the existing byte-for-byte test in `test_description_overrides.py`.
+5. **Disabled changes nothing the client can see.** With `find_tools` disabled the advertised
+   list is exactly the selected set, and a call addressed to `_gateway__find_tools` routes to
+   the pool and raises `UnknownUpstreamError` as any unknown server id would — the meta-tool is
+   not merely hidden, it is not served. It also logs as `unexposed`, not `listed`: it was never
+   in the array, so a call naming it is a hallucination like any other, and counting it as a
+   hit would corrupt the exposure field in precisely the condition (`trusted`) that runs with
+   the feature off.
 6. **`_gateway` is reserved.** A config with an upstream of that id raises at load.
 
 ## 8 · Failure behaviour
@@ -294,10 +310,15 @@ it.
 returns an error result rather than propagating. Consistent with `policy.py`'s standing rule —
 a proxy that can take the client down is unsellable at any ranking quality.
 
-`_gateway/find_tools` gets its own `kind: call` record with `exposure: listed`, since it
-genuinely was in the array. That is how we know it was called and what it cost.
+`_gateway/find_tools` gets its own `kind: call` record with `exposure: listed` **when the
+feature is enabled**, since it genuinely was in the array. That is how we know it was called and
+what it cost. With the feature disabled it was not in the array, so the same name logs
+`unexposed` (§7.5).
 
-**That record also carries `query` and the uids it disclosed** — without which §5's argument
+**That record also carries `query` and the uids it disclosed — on the failure path too**, where
+they are the query as given and an empty list. A failed meta call that omitted both would write
+a record shape-identical to an ordinary tool call, making the one record that most needs to be
+identifiable indistinguishable from every other. Without the pair, §5's argument
 for a three-state field is unsupported, because nothing would in fact hold the query. The pair
 is what makes the record training data rather than an audit trail: the agent states what it
 wanted, and the subsequent call says which candidate it then chose. That is the task-grain

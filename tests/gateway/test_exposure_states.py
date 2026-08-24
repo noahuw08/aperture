@@ -50,7 +50,7 @@ def _calls(log):
     return [r for r in _records(log.path) if r["kind"] == "call"]
 
 
-async def _gateway(tmp_path, *, find_tools=True, k=2, overrides=None):
+async def _gateway(tmp_path, *, find_tools=True, k=2, overrides=None, meta=None):
     """Live mode, pinned to `a` only — so `b`..`d` exist but are not listed."""
     sessions = {"github": FakeSession(["a", "b", "c", "d"])}
 
@@ -75,7 +75,7 @@ async def _gateway(tmp_path, *, find_tools=True, k=2, overrides=None):
     from mcp_gateway_router.baselines import StaticSet
 
     policy = Policy(config, StaticSet(config.pinned), StaticTokenCounter({}, default=10), log)
-    return Gateway(config, pool, policy, log), sessions, log
+    return Gateway(config, pool, policy, log, meta), sessions, log
 
 
 async def test_the_meta_tool_is_advertised_alongside_the_selected_set(tmp_path):
@@ -103,6 +103,26 @@ async def test_the_meta_tool_is_not_a_catalog_member(tmp_path):
 
     assert rec_on["n_candidates"] == rec_off["n_candidates"] == 4
     assert rec_on["catalog_hash"] == rec_off["catalog_hash"]
+
+
+@pytest.mark.parametrize("find_tools", [True, False])
+async def test_n_advertised_is_the_length_of_what_the_client_received(tmp_path, find_tools):
+    """`n_advertised` is documented as what the client actually received.
+
+    The meta-tool is appended *after* `Policy.decide` has already logged, so selection
+    cannot see it and the count came out one short whenever find_tools was enabled:
+    the client got 4 tools and the log said 3. Asserting against `len(tools)` rather
+    than a literal is what keeps the two from drifting apart again — under the bug this
+    passes with the feature off and fails with it on.
+    """
+    gateway, _, log = await _gateway(tmp_path, find_tools=find_tools)
+
+    tools = await gateway.list_tools()
+    log.close()
+
+    (record,) = [r for r in _records(log.path) if r["kind"] == "decision"]
+    assert record["n_advertised"] == len(tools)
+    assert record["n_advertised"] == (2 if find_tools else 1)
 
 
 async def test_a_listed_tool_logs_listed(tmp_path):
@@ -200,6 +220,46 @@ async def test_disabled_is_unchanged(tmp_path):
     log.close()
 
     assert [f"{t.server_id}__{t.name}" for t in tools] == ["github__a"]
+
+
+async def test_a_disabled_meta_tool_call_logs_unexposed(tmp_path):
+    """With find_tools off the meta-tool was never in the array, so a call naming it is
+    a hallucination and must log as a miss. Logging it `listed` unconditionally would
+    record a genuine miss as a hit in the probe's `trusted` condition — which runs with
+    the feature disabled — in the one field this feature exists to protect."""
+    gateway, _, log = await _gateway(tmp_path, find_tools=False)
+    await gateway.list_tools()
+
+    with pytest.raises(UnknownUpstreamError):
+        await gateway.call_tool(f"_gateway__{FIND_TOOLS}", {"query": "does b"})
+    log.close()
+
+    (record,) = _calls(log)
+    assert record["tool_uid"] == f"_gateway/{FIND_TOOLS}"
+    assert record["exposure"] == "unexposed"
+
+
+async def test_a_failed_meta_call_is_still_identifiable_as_one(tmp_path):
+    """The failure path must keep `query` and `disclosed`.
+
+    `log.call` omits both when they are None, so returning None on failure produced a
+    record shape-identical to an ordinary tool call — the record that most needs to be
+    identifiable becoming the one that is not."""
+
+    class ExplodingMeta(MetaTools):
+        def call(self, name, arguments, catalog):
+            raise RuntimeError("scorer is on fire")
+
+    gateway, _, log = await _gateway(tmp_path, meta=ExplodingMeta(enabled=True, k=2))
+    await gateway.list_tools()
+
+    result = await gateway.call_tool(f"_gateway__{FIND_TOOLS}", {"query": "does b"})
+    log.close()
+
+    (record,) = _calls(log)
+    assert "failed" in result.content[0].text
+    assert record["query"] == "does b"
+    assert record["disclosed"] == []
 
 
 async def test_exposure_survives_a_disclosure_and_a_rewrite_together(tmp_path):

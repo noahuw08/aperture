@@ -18,6 +18,11 @@ L3  what state did we log it as?       ``disclosed`` vs ``unexposed``.
 **L1 without L2 is the discriminator**: the model tried and the client blocked it. That
 is why the authoritative readout is the gateway's own log and not ``ArmResult`` alone.
 
+**L0 — was the tool ever offered?** ``find_tools`` being called is not the same as the
+withheld target being returned: the retriever is a deliberate stub over ~95 tools and a
+malformed call discloses nothing. A non-emission only reads as a refusal once the target
+appears in the union of what ``find_tools`` disclosed; otherwise the run is UNREADABLE.
+
 **Two conditions.**
 
 ``findtools``  core + ``find_tools``. The primary run.
@@ -47,7 +52,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..gateway.config import GATEWAY_SERVER_ID
+from ..gateway.config import GATEWAY_SERVER_ID, NAMESPACE_SEP
 from ..gateway.metatools import FIND_TOOLS
 from .runner import run_arm
 
@@ -75,7 +80,18 @@ BASE_SYSTEM = (
     "knowledge to answer — if no MCP tool can do it, say so."
 )
 
-TARGET_ADVERTISED = f"{TARGET[0]}__{TARGET[1]}"
+
+def _advertised(key: tuple[str, str]) -> str:
+    """The name the gateway puts in the ``tools/list`` array, per ``naming.py``."""
+    return f"{key[0]}{NAMESPACE_SEP}{key[1]}"
+
+
+def _uid(key: tuple[str, str]) -> str:
+    """The ``tool_uid`` the exposure log keys a call record on (``server/name``)."""
+    return f"{key[0]}/{key[1]}"
+
+
+TARGET_ADVERTISED = _advertised(TARGET)
 
 TRUSTED_SYSTEM = (
     f"{BASE_SYSTEM} The tool `{TARGET_ADVERTISED}` is available to you through the MCP "
@@ -98,6 +114,15 @@ CONDITIONS = (
 )
 
 
+def _log_dir(base: Path, condition: Condition) -> Path:
+    """Where this condition's records land. One definition, used by writer and reader.
+
+    Must stay equal to the ``log_dir`` written into the config below, which
+    ``from_file`` resolves relative to the config's own parent.
+    """
+    return base.parent / "runs" / "probe-armb" / condition.name
+
+
 def _write_config(base: Path, condition: Condition) -> Path:
     """One gateway config per condition, beside the base config.
 
@@ -106,7 +131,21 @@ def _write_config(base: Path, condition: Condition) -> Path:
     on an unresolvable ``${VAR}`` — so a config written elsewhere fails to load, the
     gateway dies at startup, and the session sees no MCP tools at all. That failure is
     silent from here: both conditions come back empty and look like a clean negative.
+
+    **The condition's log directory is emptied here**, because a run must read only its
+    own records. ``ExposureLog`` opens a *new* per-session file every run and never
+    truncates, so a second run leaves the first run's files in place: ``decisions[0]``
+    would be the oldest run's decision record, and ``_received`` would happily match a
+    target call that arrived last time. The pre-registered workflow is explicitly
+    "UNREADABLE → fix framing → rerun", so the dirty directory is the *normal* case,
+    not the edge case — and the failure it produces is the worst one available, a
+    CHANNEL OPEN verdict for a rerun in which the call never arrived. Clearing beats
+    picking the newest file: it also removes half-written logs from a crashed run.
     """
+    log_dir = _log_dir(base, condition)
+    for stale in log_dir.glob("*.jsonl"):
+        stale.unlink()
+
     out = base.parent / f"gateway.armb-{condition.name}.json"
     config = json.loads(base.read_text())
     config.update(
@@ -128,8 +167,11 @@ def _log_records(base: Path, condition: Condition) -> list[dict]:
 
     This is the authoritative readout. ``ArmResult`` reports what the *client* did with
     the model's output; only the gateway's own log says what actually arrived.
+
+    Every ``*.jsonl`` in the directory belongs to this run, because ``_write_config``
+    emptied it immediately beforehand.
     """
-    log_dir = base.parent / "runs" / "probe-armb" / condition.name
+    log_dir = _log_dir(base, condition)
     if not log_dir.exists():
         return []
     records: list[dict] = []
@@ -144,18 +186,48 @@ def _log_records(base: Path, condition: Condition) -> list[dict]:
 
 
 def _emitted(result, key: tuple[str, str]) -> bool:
-    """L1 — did the model emit a call for this tool? Names are client-namespaced."""
-    tail = f"{key[0]}__{key[1]}"
-    return any(tail in name for name in result.tool_calls)
+    """L1 — did the model emit a call for this tool?
+
+    The client prefixes our advertised name with its own namespace
+    (``mcp__gateway__github__list_releases``), so the match is on the *tail*, not a
+    substring: under ``in``, a catalog containing ``github__list_releases_v2`` would
+    report the withheld target as called and manufacture a CHANNEL OPEN out of a call
+    for a different tool.
+    """
+    tail = _advertised(key)
+    return any(
+        name == tail or name.endswith(f"{NAMESPACE_SEP}{tail}") for name in result.tool_calls
+    )
 
 
 def _received(records: list[dict], key: tuple[str, str]) -> dict | None:
     """L2/L3 — did the gateway receive it, and as what?"""
-    uid = f"{key[0]}/{key[1]}"
+    uid = _uid(key)
     for record in records:
         if record.get("kind") == "call" and record.get("tool_uid") == uid:
             return record
     return None
+
+
+def _meta_calls(records: list[dict]) -> dict | None:
+    """Every ``find_tools`` call in this run, folded into one summary.
+
+    Not the first record. The agent may call ``find_tools`` several times, and the
+    verdict gates on whether the withheld target was *ever* disclosed — so reading only
+    the first call would let a second, better query that did surface the target go
+    unseen, and the run would be thrown away as UNREADABLE despite having exercised the
+    channel. Queries are kept in order for the same reason: the one that mattered is
+    not necessarily the first.
+    """
+    uid = _uid((GATEWAY_SERVER_ID, FIND_TOOLS))
+    metas = [r for r in records if r.get("kind") == "call" and r.get("tool_uid") == uid]
+    if not metas:
+        return None
+    return {
+        "n": len(metas),
+        "queries": [r.get("query") for r in metas],
+        "disclosed": sorted({u for r in metas for u in (r.get("disclosed") or [])}),
+    }
 
 
 async def probe(
@@ -180,15 +252,21 @@ async def probe(
         records = _log_records(base_config, condition)
         decisions = [r for r in records if r.get("kind") == "decision"]
         received = _received(records, TARGET)
-        meta = _received(records, (GATEWAY_SERVER_ID, FIND_TOOLS))
+        meta = _meta_calls(records)
+        disclosed = (meta or {}).get("disclosed") or []
 
         row = {
             "emitted": _emitted(result, TARGET),
             "received": received is not None,
             "exposure": (received or {}).get("exposure"),
             "find_tools_called": meta is not None,
-            "find_tools_query": (meta or {}).get("query"),
+            "find_tools_calls": (meta or {}).get("n", 0),
+            "find_tools_queries": (meta or {}).get("queries"),
             "find_tools_disclosed": (meta or {}).get("disclosed"),
+            # The hypothesis is about a tool the model *learned of* from a tool result.
+            # If the stub retriever never returned the target, the model was never told
+            # it exists and the channel was never exercised — see `_verdict`.
+            "target_disclosed": _uid(TARGET) in disclosed,
             # Live mode has never served a real client. A wrong count here means the
             # finding is about our config, not about the client.
             "n_advertised": decisions[0]["n_advertised"] if decisions else None,
@@ -200,7 +278,8 @@ async def probe(
         results[condition.name] = row
         print(
             f"  {condition.name:<10} {condition.reads:<50} | "
-            f"advertised={row['n_advertised']} find_tools={row['find_tools_called']!s:<5} "
+            f"advertised={row['n_advertised']} find_tools={row['find_tools_calls']} "
+            f"target_disclosed={row['target_disclosed']!s:<5} "
             f"emitted={row['emitted']!s:<5} received={row['received']!s:<5} "
             f"exposure={row['exposure']}",
             flush=True,
@@ -214,7 +293,20 @@ def _verdict(results: dict) -> str:
     """State the reading, or refuse to. Pre-registered before the first run."""
     findtools, trusted = results["findtools"], results["trusted"]
 
-    if findtools["n_advertised"] not in (len(CORE) + 1, None):
+    # `None` means no decision record at all, which is a *different* failure from a
+    # wrong count: the gateway never answered a tools/list. Folding it into the count
+    # check would let it fall through to the framing verdicts below and report a dead
+    # config as a fact about the model.
+    if findtools["n_advertised"] is None:
+        return (
+            "UNREADABLE — the findtools condition wrote no decision record, so the "
+            "gateway never answered a tools/list. The likely cause is the config "
+            "failing to load and the gateway dying at startup, in which case the "
+            "session saw no MCP tools at all and every field below is empty for that "
+            "reason. This is a config or startup problem, not a finding about the "
+            "client. Fix it before rerunning."
+        )
+    if findtools["n_advertised"] != len(CORE) + 1:
         return (
             f"UNREADABLE — the findtools condition advertised "
             f"{findtools['n_advertised']} tools, expected {len(CORE) + 1} (core + "
@@ -228,6 +320,10 @@ def _verdict(results: dict) -> str:
             "gave up. Fix the framing; do not report this as a null."
         )
 
+    # The two emitted branches stand on their own: whatever the model learned the name
+    # from, it produced one, and whether the call arrived is the measurement. The
+    # disclosure gate below therefore sits *after* them, guarding only the branch that
+    # reads a non-emission as a fact about the model.
     if findtools["emitted"] and findtools["received"]:
         return (
             f"CHANNEL OPEN — the model called a tool it never saw advertised and the "
@@ -243,20 +339,38 @@ def _verdict(results: dict) -> str:
             "cache-invalidation cost."
         )
 
-    # The model did not try. The control says whether it could have. But the control
-    # itself must be readable — its config working and its run complete.
-    if trusted["n_advertised"] not in (len(CORE), None):
+    # The model did not try. Before that can be read as a refusal, it has to be true
+    # that the model was ever told the tool exists. The retriever is a deliberate stub
+    # (LexicalScorer, top-k=5) over ~95 tools, and a call with a bad or absent `query`
+    # discloses nothing at all — so find_tools being *called* is not the same as the
+    # target being *offered*. Without this gate the fall-through below reports
+    # STRUCTURAL, the strongest negative in the pre-registered reading, off a run that
+    # never exercised the channel it exists to test.
+    if not findtools["target_disclosed"]:
         return (
-            f"UNREADABLE — the trusted condition advertised "
-            f"{trusted['n_advertised']} tools, expected {len(CORE)} (core only, no "
-            f"meta-tool). This is a live-mode or config problem, not a finding about "
-            f"the client. Fix it before rerunning."
+            f"UNREADABLE — find_tools was called "
+            f"{findtools['find_tools_calls']}x but never returned {_uid(TARGET)}, so "
+            f"the model was never told the withheld tool exists and the probe did not "
+            f"test its own hypothesis. Queries: {findtools['find_tools_queries']!r}; "
+            f"disclosed: {findtools['find_tools_disclosed']!r}. Fix the retrieval side "
+            f"— the query the agent is steered to write, or k — not the client, and do "
+            f"not report this as a null."
         )
+
+    # The control says whether the model could have called it. But the control itself
+    # must be readable — its config working and its run complete.
     if trusted["n_advertised"] is None:
         return (
             "UNREADABLE — the trusted condition's gateway config failed to load or "
             "did not complete a run (no decision records in log). This is a config or "
             "startup problem, not a finding about the client. Fix it before rerunning."
+        )
+    if trusted["n_advertised"] != len(CORE):
+        return (
+            f"UNREADABLE — the trusted condition advertised "
+            f"{trusted['n_advertised']} tools, expected {len(CORE)} (core only, no "
+            f"meta-tool). This is a live-mode or config problem, not a finding about "
+            f"the client. Fix it before rerunning."
         )
 
     if trusted["emitted"] and trusted["received"]:

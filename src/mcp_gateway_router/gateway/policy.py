@@ -76,7 +76,20 @@ class Policy:
         catalog: Catalog,
         catalog_hash: str,
         context: DecisionContext,
+        n_meta_tools: int = 0,
     ) -> list[Tool]:
+        """Choose the advertised set and record the decision.
+
+        ``n_meta_tools`` is how many gateway-owned tools the caller will append to what
+        this method returns. It has to be passed in: meta-tools are deliberately not
+        ``Catalog`` members — that is what keeps ``n_candidates`` and ``catalog_hash``
+        comparable across the change that introduced them — so selection cannot see
+        them, yet ``n_advertised`` is documented as *what the client received*. Without
+        it the log undercounts by one whenever ``find_tools`` is enabled, and the arm B
+        probe's own live-mode sanity check (advertised == core + 1) fails on every run,
+        turning a real result into UNREADABLE. Defaults to 0, so a caller that appends
+        nothing is unaffected.
+        """
         pinned = self.pinned_tools(catalog)
         version = self._selector.name
 
@@ -95,7 +108,7 @@ class Policy:
             session_id=context.session_id or "unknown",
             arm=self._config.arm,
             mode=self._config.mode,
-            n_advertised=len(advertised),
+            n_advertised=len(advertised) + n_meta_tools,
             decision_point="C" if context.task else "A",
             catalog_hash=catalog_hash,
             selector_version=version,

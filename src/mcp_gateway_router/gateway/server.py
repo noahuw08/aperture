@@ -104,12 +104,18 @@ class Gateway:
         catalog = await self._pool.aggregate()
         # Held for find_tools, which searches the same catalog the selector cut from.
         self._catalog = catalog
-        exposed = self._policy.decide(catalog, self._pool.catalog_hash(), self._context())
+        # Built once and reused below: the count handed to the log and the list handed
+        # to the client must be the same thing, or `n_advertised` stops meaning "what
+        # the client actually received" the moment the two calls could disagree.
+        meta = self._meta.advertise()
+        exposed = self._policy.decide(
+            catalog, self._pool.catalog_hash(), self._context(), len(meta)
+        )
         # Keys, not rewritten tools: exposure must survive a description change.
         self._exposed = {t.key for t in exposed}
         # Appended after selection and never a Catalog member, so the selector cannot
         # score or cut it and `n_candidates` / `catalog_hash` are unaffected.
-        return self._rewrite(exposed) + self._meta.advertise()
+        return self._rewrite(exposed) + meta
 
     def _augment(self, result: Any, key: tuple[str, str]) -> Any:
         """Append a gateway suggestion to a tool result.
@@ -151,8 +157,17 @@ class Gateway:
         than just ``key[0] == GATEWAY_SERVER_ID``. A server-id-only check would call a
         request for a hallucinated meta-tool name "listed", recording a genuine miss
         as a hit and polluting the exposed/disclosed split it exists to protect.
+
+        And only when the meta-tool is actually being advertised. With ``find_tools``
+        disabled it was never in the array, so a call naming it is a hallucination like
+        any other and must log as a miss — the probe's ``trusted`` condition runs with
+        it disabled, so an ungated check would turn exactly that condition's misses
+        into hits, in the one field this feature exists to protect.
         """
-        if key in self._exposed or key == (GATEWAY_SERVER_ID, FIND_TOOLS):
+        meta_listed = key == (GATEWAY_SERVER_ID, FIND_TOOLS) and self._meta.handles(
+            GATEWAY_SERVER_ID
+        )
+        if key in self._exposed or meta_listed:
             return EXPOSURE_LISTED
         if key in self._disclosed:
             return EXPOSURE_DISCLOSED
@@ -167,20 +182,27 @@ class Gateway:
         call (find_tools before any ``tools/list``) triggers ``self._pool.aggregate()``
         here, and a failure there must degrade the same way as a failure in the search
         itself, not escape past this method's own promise not to raise.
+
+        The query and an (empty) disclosure list are returned on the failure path too.
+        ``log.call`` omits both when they are ``None``, so a failed meta call would
+        otherwise write a record shape-identical to an ordinary tool call — the one
+        record that most needs to be identifiable, since a meta record is only training
+        data while it carries what was asked and what came back.
         """
+        raw = arguments.get("query") if isinstance(arguments, dict) else None
+        query = raw if isinstance(raw, str) else ""
         try:
             if self._catalog is None:
                 self._catalog = await self._pool.aggregate()
             text, disclosed = self._meta.call(tool_name, arguments, self._catalog)
         except Exception:
             logger.exception("meta-tool %s failed", tool_name)
-            return self._as_result("find_tools failed unexpectedly."), None, None
+            return self._as_result("find_tools failed unexpectedly."), query, []
 
         self._disclosed |= disclosed
-        query = arguments.get("query")
         return (
             self._as_result(text),
-            query if isinstance(query, str) else "",
+            query,
             sorted(f"{s}/{n}" for s, n in disclosed),
         )
 

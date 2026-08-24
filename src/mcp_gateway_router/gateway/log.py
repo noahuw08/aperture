@@ -108,10 +108,14 @@ class ExposureLog:
     ) -> None:
         """One exposure decision.
 
-        ``exposed`` is what the selector *chose*; ``n_advertised`` is what the client
-        actually received. In ``live`` mode they match. In ``shadow`` mode the client
-        receives the whole catalog regardless, so ``exposed`` is a counterfactual and
-        ``n_advertised == n_candidates``.
+        ``exposed`` is what the selector *chose*; ``n_advertised`` is the length of the
+        ``tools/list`` array the client actually received. In ``live`` mode the two
+        match, **plus any gateway-owned meta-tools appended after selection** — those
+        are not catalog members and so never appear in ``exposed``, but the client is
+        handed them all the same, and a count that excluded them would not be the thing
+        this field claims to be. In ``shadow`` mode the client receives the whole
+        catalog regardless, so ``exposed`` is a counterfactual and ``n_advertised ==
+        n_candidates + meta-tools``.
 
         Both are recorded because ``exposed: []`` is otherwise ambiguous — it reads
         identically for "shadow mode, client got everything" and "live mode, selector
