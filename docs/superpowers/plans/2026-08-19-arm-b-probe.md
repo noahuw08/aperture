@@ -1547,4 +1547,37 @@ The verdict changes what the project does next, so it does not live only in a JS
 1. Task 1 Step 4 originally left `server.py` calling `self._exposure(key)`, which Task 4 introduces — the suite would have been red between tasks. It now writes the two-state expression inline, and Task 4 replaces it.
 2. Task 4's rewrite-invariant test reconstructed a frozen `GatewayConfig` by hand through `__dataclass_fields__`. The `_gateway` helper now takes an `overrides` argument instead. The original would have coupled the test to the dataclass's field list, so adding any config field later would have broken a test that has nothing to do with config.
 
+---
+
+## Execution notes — added 2026-08-23, after Tasks 1–5 shipped
+
+Tasks 1–5 are complete (297 → 312 tests). **Task 6 was deliberately not run**; it spends money
+and waits on an explicit decision.
+
+**Where the shipped code deliberately diverges from this plan.** Review found defects in code
+this plan mandated verbatim; the deviations were approved rather than papered over.
+
+| Plan said | Shipped instead | Why |
+|---|---|---|
+| `_exposure` uses `self._meta.handles(key[0])` | full identity `key == (GATEWAY_SERVER_ID, FIND_TOOLS)`, gated on the meta-tool actually being advertised | `handles(key[0])` logged *any* `_gateway__<hallucinated>` call as `listed`/`ok` — a miss recorded as a hit, in the one field the feature exists to protect |
+| `pool.aggregate()` above the `try` in `_call_meta` | inside it | a cold-catalog `find_tools` call could raise out of `call_tool`, contradicting fail-open and the method's own docstring |
+| `self._called.append(key)` unconditional | skipped for meta calls | `_called` feeds `DecisionContext.tools_called`, a selector input; only catalog tools belong there |
+| `Policy.decide(catalog, hash, context)` | `+ n_meta_tools: int = 0` | **the plan's worst bug.** `n_advertised` was logged before the meta-tool was appended, so the log said 3 while the client got 4 — breaking `log.py`'s documented "what the client actually received" contract and making the probe's guard fire on *every* run. The probe would have returned `UNREADABLE` always, after paying for both sessions. |
+| verdict gates on `find_tools` being *called* | also on it having *returned* `TARGET` | with a stub retriever over ~95 tools the target can miss top-5, so the model never learns the tool exists — and the probe would report `STRUCTURAL`, its strongest negative, off a run that never exercised the channel |
+| `_log_records` globs the condition's log dir | dir cleared per run | the dir is never cleaned and `ExposureLog` writes a new file per session, so a rerun could read the *previous* run's records — a false `CHANNEL OPEN` during exactly the "UNREADABLE → fix → rerun" loop this design prescribes |
+
+**The finding worth remembering.** This plan claimed two tests pinned the exposed/disclosed
+invariant. They did not: under `_exposed |= disclosed`, **9 of 10 passed**, and the test whose
+docstring promised to catch contamination asserted a value the contaminated version produces
+identically. That is the project's documented recurring failure mode — an evaluation that
+cannot fail — making five. It was caught in review, and the replacement
+(`test_disclosed_is_not_folded_into_exposed`) asserts on the sets directly and was
+mutation-checked against an injected merge bug.
+
+**Deferred, not blocking:** `_write_config` is now destructive to a condition's prior logs on
+rerun (deliberate, documented); `config.py` has two long lines (no linter configured); no
+negative test for a server id merely *containing* `_gateway` (the check is `==`).
+
+---
+
 **Verified against the repo while writing, not assumed:** `tests/gateway/test_config.py` exists (so Task 2 appends rather than creates); `.gitignore:19-20` already carries `gateway.probe-*.json` and `gateway.suggest-*.json`, so Task 5's entry follows an established pattern; `replay/sessions.py:112-116` reads only `tool_uid` from call records, which is what makes the spec's "no migration" claim true.

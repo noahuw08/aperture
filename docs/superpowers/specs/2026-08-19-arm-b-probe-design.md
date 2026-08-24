@@ -232,22 +232,39 @@ the authoritative readout is the gateway's log and not `ArmResult` alone.
 
 Fixed before the first run. *What result would make this fail?* — the `CLIENT FILTERS` row.
 
-**`findtools`:**
+**The refusal gates come first**, in this order. Each states a way the run is *unreadable*
+rather than negative, and every one of them describes a setup failure that would otherwise be
+reported as a fact about the client:
+
+| # | Condition | Why it is unreadable, not a finding |
+|---|---|---|
+| 1 | `findtools` wrote **no decision record** | The gateway never answered a `tools/list` — almost always the config failing to load and the process dying at startup, in which case the session saw no MCP tools at all and every field below is empty for that reason. |
+| 2 | `findtools` advertised ≠ `len(CORE) + 1` | Live-mode or config problem. The count includes the meta-tool. |
+| 3 | `find_tools` was **never called** | The probe did not exercise the thing it exists to test; the agent answered from the core or gave up. Fix framing. |
+| 4 | `find_tools` was called but **never returned `TARGET`** | The model was never told the withheld tool exists, so a non-emission cannot be read as refusal. The retriever is a deliberate stub over ~95 tools and a bad or absent `query` discloses nothing — *called* is not *offered*. Fix the retrieval side (the query the agent is steered to write, or `k`), not the client. |
+| 5 | `trusted` wrote no decision record, or advertised ≠ `len(CORE)` | Same as 1–2 for the control. Note the asymmetry: `trusted` expects `len(CORE)`, with **no** meta-tool. |
+
+Gate 4 sits **after** the two emit branches, deliberately. A call the model emitted is a valid
+measurement however it learned the name — a guessed name that gets forwarded demonstrates the
+channel just as conclusively as a disclosed one. The gate guards only the branch that reads a
+*non*-emission as a fact about the model, which is the single step requiring that the model was
+ever told the tool exists.
+
+**`findtools` — substantive readings:**
 
 | L1 emit | L2 arrive | Reading |
 |---|---|---|
 | ✅ | ✅ | **CHANNEL OPEN.** Arm B is real — `find_tools` + ranker + bandit, no collection and no cache cost. `exposure: disclosed` fires for the first time in the project. |
 | ✅ | ❌ | **CLIENT FILTERS.** Registration is required; arm B becomes `find_tools` + `list_changed`, gated on measuring the cache cost. |
-| ❌ | — | **MODEL DECLINES** — if `find_tools` was called and returned. Read `trusted` to see whether it is the tool-result channel specifically. |
-| ❌ | — | **UNREADABLE** — if `find_tools` was never called. The probe did not exercise the thing it exists to test. Bail and fix framing; do not report a null. |
+| ❌ | — | Falls through to `trusted`, once gate 4 has confirmed the target was actually offered. |
 
-**`trusted`:**
+**`trusted` — the control:**
 
 | Outcome | Reading |
 |---|---|
-| emit + arrive | client does not filter → any `findtools` failure is trust/framing, and attackable |
-| emit, no arrive | client filters → structural |
-| no emit | the model will not call an unadvertised name even under operator instruction → structural at the model layer, the strongest negative available |
+| emit + arrive | **MODEL DECLINES.** The client forwards such a call under operator instruction, so any `findtools` failure is about trust in tool output — a framing problem, and attackable. |
+| emit, no arrive | **CLIENT FILTERS**, shown by the control. |
+| no emit | **STRUCTURAL.** The model will not call an unadvertised name even when the system prompt names it exactly. Not promptable-around; arm B requires `list_changed`. The strongest negative available, and therefore the one behind the most gates. |
 
 ### 6.5 · Traps designed against
 
