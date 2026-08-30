@@ -220,13 +220,46 @@ between them is the whole ambiguity:
 
 - **L1 — did the model emit it?** `ArmResult.tool_calls`. The `ToolUseBlock` is in the
   assistant message whether or not the client executes it, so this reads **model intent**.
-- **L2 — did the gateway receive it?** A `kind: call` record for `github/list_releases` in
-  `runs/probe-armb/{condition}/*.jsonl`. This reads **client forwarding**.
+- **L2 — did the gateway receive it?** A `kind: call` record in
+  `runs/probe-armb/{condition}/*.jsonl` whose `exposure` is `disclosed` or `unexposed`. This
+  reads **client forwarding**.
 - **L3 — what state did we log?** `disclosed` vs `unexposed`.
 
 **L1-without-L2 is the discriminator.** If the model emits the call and no record reaches us,
 the client filtered it in flight — established inside the `findtools` run itself. This is why
 the authoritative readout is the gateway's log and not `ArmResult` alone.
+
+**What counts as "it" — the phenomenon, not one tool.** The gateway advertises a 3-tool core,
+so *every one of the other 92 tools in the catalog* is a tool the client never saw. An earlier
+reading keyed both layers on `TARGET` alone; a live pre-flight showed what that costs. Asked
+*"get recent release tag names for a github repo"*, the stub retriever returned
+`get_latest_release`, `get_release_by_tag` and `get_tag` — reasonable substitutes for
+`list_releases`, and every one of them equally unadvertised. If the agent calls one of those,
+the channel is demonstrably open, and a `TARGET`-only reading records `emitted=False,
+received=False` and reports **STRUCTURAL** — its strongest negative — off a run in which the
+thing under test visibly worked. So:
+
+- **L2 is authoritative and needs no extra machinery.** The gateway already computes this:
+  `exposure` is assigned by comparing the called key against the set actually put in the
+  `tools/list` array (`server._exposure`), so `disclosed`/`unexposed` on a `kind: call` record
+  *is* "a call for a tool that was never advertised", stated by the only party that sees both
+  sides. `listed` is the core and is therefore not it. Which tools arrived, and in which state,
+  are recorded.
+- **`_gateway/find_tools` is excluded by name**, not by relying on it logging as `listed`. With
+  the meta-tool disabled — exactly the `trusted` condition — a call naming it logs `unexposed`,
+  and leaning on the accident would turn the control's own hallucination into a CHANNEL OPEN.
+- **L1 widens to match**: did the model emit a call for any tool that is not in `CORE` and is
+  not the meta-tool? The SDK reports client-namespaced names (`mcp__gw__github__get_tag`), so
+  each is parsed back to a `(server_id, name)` key with `naming.parse_advertised`, peeling
+  prefix segments until the head is a server the gateway fronts. **Names that do not parse are
+  ignored, never counted** — the client's own built-ins (`ToolSearch`, `Bash`, `Read`) are
+  mixed into the same dict, and scoring one of them as an unadvertised MCP call would
+  manufacture a false CHANNEL OPEN, the worst failure available here because CHANNEL OPEN is
+  the verdict that says arm B needs no further work.
+- **`TARGET` survives as a reported sub-signal.** `target_emitted` / `target_received` /
+  `target_exposure` stay in the saved row, so the JSON still says whether the specific withheld
+  tool was the one used. They do not gate anything: which tool the stub retriever happened to
+  rank is a detail, the channel is the finding.
 
 ### 6.4 · Pre-registered reading
 
@@ -241,22 +274,31 @@ reported as a fact about the client:
 | 1 | `findtools` wrote **no decision record** | The gateway never answered a `tools/list` — almost always the config failing to load and the process dying at startup, in which case the session saw no MCP tools at all and every field below is empty for that reason. |
 | 2 | `findtools` advertised ≠ `len(CORE) + 1` | Live-mode or config problem. The count includes the meta-tool. |
 | 3 | `find_tools` was **never called** | The probe did not exercise the thing it exists to test; the agent answered from the core or gave up. Fix framing. |
-| 4 | `find_tools` was called but **never returned `TARGET`** | The model was never told the withheld tool exists, so a non-emission cannot be read as refusal. The retriever is a deliberate stub over ~95 tools and a bad or absent `query` discloses nothing — *called* is not *offered*. Fix the retrieval side (the query the agent is steered to write, or `k`), not the client. |
+| 4 | `find_tools` was called but **disclosed nothing outside the advertised set** | The model was never told about a callable tool it had not been shown, so a non-emission cannot be read as refusal. The retriever is a deliberate stub over ~95 tools and a bad or absent `query` discloses nothing — *called* is not *offered*. Fix the retrieval side (the query the agent is steered to write, or `k`), not the client. |
 | 5 | `trusted` wrote no decision record, or advertised ≠ `len(CORE)` | Same as 1–2 for the control. Note the asymmetry: `trusted` expects `len(CORE)`, with **no** meta-tool. |
+
+Gate 4's question is *"was the model ever told about at least one callable tool it had not been
+advertised?"* — so **any** disclosure outside `CORE` (and outside the meta-tool) passes it, not
+just `TARGET`. This is the same widening as §6.3, applied to the gate: the pre-flight's three
+non-target release tools are a run that *did* exercise the hypothesis, and a `TARGET`-only gate
+would have thrown it away as UNREADABLE while its verdict fell through to STRUCTURAL.
 
 Gate 4 sits **after** the two emit branches, deliberately. A call the model emitted is a valid
 measurement however it learned the name — a guessed name that gets forwarded demonstrates the
 channel just as conclusively as a disclosed one. The gate guards only the branch that reads a
 *non*-emission as a fact about the model, which is the single step requiring that the model was
-ever told the tool exists.
+ever told such a tool exists.
 
 **`findtools` — substantive readings:**
 
 | L1 emit | L2 arrive | Reading |
 |---|---|---|
-| ✅ | ✅ | **CHANNEL OPEN.** Arm B is real — `find_tools` + ranker + bandit, no collection and no cache cost. `exposure: disclosed` fires for the first time in the project. |
+| ✅ | ✅ | **CHANNEL OPEN.** Arm B is real — `find_tools` + ranker + bandit, no collection and no cache cost. The verdict names the tool(s) that actually arrived and their exposure state, and says whether `TARGET` was among them; it does not imply it was. `exposure: disclosed` fires for the first time in the project. |
 | ✅ | ❌ | **CLIENT FILTERS.** Registration is required; arm B becomes `find_tools` + `list_changed`, gated on measuring the cache cost. |
-| ❌ | — | Falls through to `trusted`, once gate 4 has confirmed the target was actually offered. |
+| ❌ | — | Falls through to `trusted`, once gate 4 has confirmed some withheld tool was actually offered. |
+
+Both L1 and L2 here read the widened signals of §6.3: *any* tool outside `CORE` and the
+meta-tool, in either condition.
 
 **`trusted` — the control:**
 
@@ -354,6 +396,7 @@ decided here whether a production gateway logs query text, hashes it, or drops i
 | `tests/gateway/test_exposure_states.py` | all three states through a `Gateway` with a fake pool, following `test_server.py`'s pattern |
 | `tests/gateway/test_config.py` | reserved id, `find_tools` defaults |
 | existing six `was_exposed` sites + `test_log.py` | updated to the enum |
+| `tests/bench/test_probe_armb.py` | the readout, without paying for a run: every refusal gate, the widened L1/L2 of §6.3 (a non-`TARGET` tool reads CHANNEL OPEN; a client built-in never counts as an unadvertised MCP call), gate 4 passing on a non-`TARGET` disclosure and still refusing when nothing outside the core was disclosed |
 
 ### What the tests deliberately cannot cover
 

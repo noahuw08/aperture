@@ -12,14 +12,21 @@ from mcp_gateway_router.bench.probe_armb import (
     CONDITIONS,
     CORE,
     TARGET,
+    _disclosed_outside_core,
     _emitted,
     _log_dir,
     _log_records,
     _meta_calls,
     _uid,
+    _unadvertised_emitted,
+    _unadvertised_received,
     _verdict,
     _write_config,
 )
+
+#: An unadvertised GitHub tool that is *not* the withheld target. The live pre-flight had
+#: the stub retriever answer a release query with exactly this class of substitute.
+OTHER = ("github", "get_latest_release")
 
 
 class FakeResult:
@@ -37,11 +44,21 @@ def _meta_record(query, disclosed):
 
 
 def _row(**overrides):
-    """A readable `findtools` row: config fine, find_tools called, target offered."""
+    """A readable `findtools` row: config fine, find_tools called, something offered.
+
+    `disclosed_outside_core` is *derived* from `find_tools_disclosed` unless a test says
+    otherwise, so a test that narrows what the retriever returned cannot accidentally
+    keep gate 4's input wide and test a state the probe can never produce.
+    """
     row = {
         "emitted": False,
         "received": False,
         "exposure": None,
+        "unadvertised_emitted": [],
+        "unadvertised_received": [],
+        "target_emitted": False,
+        "target_received": False,
+        "target_exposure": None,
         "find_tools_called": True,
         "find_tools_calls": 1,
         "find_tools_queries": ["releases"],
@@ -50,6 +67,8 @@ def _row(**overrides):
         "n_advertised": len(CORE) + 1,
     }
     row.update(overrides)
+    if "disclosed_outside_core" not in overrides:
+        row["disclosed_outside_core"] = _disclosed_outside_core(row["find_tools_disclosed"])
     return row
 
 
@@ -89,9 +108,9 @@ def test_meta_calls_is_none_when_find_tools_was_never_called():
     assert _meta_calls([{"kind": "call", "tool_uid": "github/get_me"}]) is None
 
 
-def test_a_run_that_never_disclosed_the_target_is_unreadable_not_structural():
+def test_a_run_that_disclosed_nothing_outside_the_core_is_unreadable_not_structural():
     """The finding this probe would otherwise report with most confidence, drawn from a
-    run that never showed the model the tool."""
+    run that never showed the model any tool it had not already been given."""
     verdict = _verdict(
         {
             "findtools": _row(
@@ -105,7 +124,25 @@ def test_a_run_that_never_disclosed_the_target_is_unreadable_not_structural():
 
     assert verdict.startswith("UNREADABLE")
     assert "STRUCTURAL" not in verdict
-    assert _uid(TARGET) in verdict
+    assert "outside the advertised core" in verdict
+
+
+def test_gate_four_passes_on_a_disclosure_that_is_not_the_target():
+    """The live pre-flight's actual outcome: the stub retriever answered a plausible
+    release query with `get_latest_release` and friends, never `list_releases`. Those are
+    just as withheld, so the model *was* told a callable tool it had not been advertised
+    and the run is readable. Gating on TARGET threw such a run away as UNREADABLE."""
+    verdict = _verdict(
+        {
+            "findtools": _row(
+                target_disclosed=False,
+                find_tools_disclosed=["github/get_me", _uid(OTHER)],
+            ),
+            "trusted": _trusted(),
+        }
+    )
+
+    assert verdict.startswith("STRUCTURAL")
 
 
 def test_an_emitted_and_received_call_reads_open_even_without_a_disclosure():
@@ -114,12 +151,89 @@ def test_an_emitted_and_received_call_reads_open_even_without_a_disclosure():
     the name, and discarding that as UNREADABLE would throw away a positive."""
     verdict = _verdict(
         {
-            "findtools": _row(emitted=True, received=True, exposure="unexposed", target_disclosed=False),
+            "findtools": _row(
+                emitted=True,
+                received=True,
+                exposure="unexposed",
+                unadvertised_received=[{"tool_uid": _uid(TARGET), "exposure": "unexposed"}],
+                target_received=True,
+                target_disclosed=False,
+                find_tools_disclosed=["github/get_me"],
+            ),
             "trusted": _trusted(),
         }
     )
 
     assert verdict.startswith("CHANNEL OPEN")
+
+
+def test_channel_open_on_a_non_target_tool_names_the_tool_that_arrived():
+    """The whole point of the widening. A call for any withheld tool proves the channel;
+    the verdict must say which one arrived and in what state, rather than implying the
+    withheld target was used when it was not."""
+    verdict = _verdict(
+        {
+            "findtools": _row(
+                emitted=True,
+                received=True,
+                exposure="disclosed",
+                unadvertised_emitted=[_uid(OTHER)],
+                unadvertised_received=[{"tool_uid": _uid(OTHER), "exposure": "disclosed"}],
+                target_emitted=False,
+                target_received=False,
+                target_disclosed=False,
+                find_tools_disclosed=[_uid(OTHER)],
+            ),
+            "trusted": _trusted(),
+        }
+    )
+
+    assert verdict.startswith("CHANNEL OPEN")
+    assert _uid(OTHER) in verdict
+    assert "disclosed" in verdict
+
+
+def test_unadvertised_emitted_counts_any_tool_outside_the_advertised_set():
+    """L1 is about the class of tool, not about TARGET. A substitute the retriever ranked
+    above the withheld target exercises the hypothesis just as well."""
+    emitted = _unadvertised_emitted(
+        FakeResult(
+            "mcp__gw__github__get_latest_release",
+            "mcp__gw__github__get_me",
+            "mcp__gw___gateway__find_tools",
+        )
+    )
+
+    assert emitted == [_uid(OTHER)]
+
+
+def test_unadvertised_emitted_ignores_the_clients_own_builtins():
+    """The worst failure available here: counting a `Bash` or `ToolSearch` call as an
+    unadvertised MCP call manufactures a CHANNEL OPEN — the one verdict that says arm B
+    needs no further work — out of a run in which the gateway was never touched."""
+    assert _unadvertised_emitted(FakeResult("ToolSearch", "Bash", "Read", "WebFetch")) == []
+
+
+def test_unadvertised_received_reads_the_gateways_own_exposure_field():
+    """L2 is authoritative because the gateway assigns `exposure` by comparing the called
+    key against what it actually put in the tools/list array. `listed` is the core;
+    `disclosed`/`unexposed` *is* the phenomenon. find_tools is excluded by name, not by
+    trusting that it happens to log as `listed` — with the meta-tool disabled, as in the
+    `trusted` condition, a call naming it logs `unexposed`."""
+    arrived = _unadvertised_received(
+        [
+            {"kind": "call", "tool_uid": "github/get_me", "exposure": "listed"},
+            {"kind": "call", "tool_uid": _uid(OTHER), "exposure": "disclosed"},
+            {"kind": "call", "tool_uid": _uid(TARGET), "exposure": "unexposed"},
+            {"kind": "call", "tool_uid": "_gateway/find_tools", "exposure": "unexposed"},
+            {"kind": "decision", "n_advertised": 4},
+        ]
+    )
+
+    assert arrived == [
+        {"tool_uid": _uid(OTHER), "exposure": "disclosed"},
+        {"tool_uid": _uid(TARGET), "exposure": "unexposed"},
+    ]
 
 
 def test_structural_still_reachable_once_the_target_was_actually_disclosed():

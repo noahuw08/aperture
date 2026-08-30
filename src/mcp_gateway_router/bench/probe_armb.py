@@ -18,10 +18,23 @@ L3  what state did we log it as?       ``disclosed`` vs ``unexposed``.
 **L1 without L2 is the discriminator**: the model tried and the client blocked it. That
 is why the authoritative readout is the gateway's own log and not ``ArmResult`` alone.
 
-**L0 — was the tool ever offered?** ``find_tools`` being called is not the same as the
-withheld target being returned: the retriever is a deliberate stub over ~95 tools and a
-malformed call discloses nothing. A non-emission only reads as a refusal once the target
-appears in the union of what ``find_tools`` disclosed; otherwise the run is UNREADABLE.
+**The unit of measurement is the phenomenon, not one tool.** The gateway advertises a
+3-tool core, so *every other tool in the 95-tool catalog* is one the client never saw. An
+early version keyed the whole verdict on ``TARGET`` alone, and a live pre-flight caught
+what that costs: the stub retriever, asked "get recent release tag names for a github
+repo", returned ``get_latest_release``, ``get_release_by_tag`` and ``get_tag`` — sensible
+substitutes, every one of them just as unadvertised as ``list_releases``. If the agent
+calls one of those the channel is demonstrably open, and the narrow probe would have
+recorded ``emitted=False, received=False`` and reported STRUCTURAL, its strongest
+negative, off a run in which the thing under test visibly worked. So L1 and L2 both ask
+"any tool outside the advertised set?"; ``TARGET`` survives only as a reported
+sub-signal.
+
+**L0 — was the model ever told about a callable tool it had not been advertised?**
+``find_tools`` being called is not the same as anything useful being returned: the
+retriever is a deliberate stub over ~95 tools and a malformed call discloses nothing. A
+non-emission only reads as a refusal once ``find_tools`` disclosed at least one tool
+outside the core; otherwise the run is UNREADABLE.
 
 **Two conditions.**
 
@@ -53,7 +66,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..gateway.config import GATEWAY_SERVER_ID, NAMESPACE_SEP
+from ..gateway.log import EXPOSURE_DISCLOSED, EXPOSURE_UNEXPOSED
 from ..gateway.metatools import FIND_TOOLS
+from ..gateway.naming import AdvertisedNameError, parse_advertised
 from .runner import run_arm
 
 REPO = Path(__file__).resolve().parents[3]
@@ -74,6 +89,29 @@ TARGET = ("github", "list_releases")
 #: can list releases. A probe fixture, not a proposal: production core membership is an
 #: open design question and nothing in this probe answers it.
 CORE = [["github", "get_me"], ["notion", "API-get-self"], ["playwright", "browser_close"]]
+
+#: The meta-tool's own key. Excluded from both L1 and L2 *by name*, never by relying on
+#: the gateway logging it as ``listed``: with ``find_tools`` disabled — which is exactly
+#: what the ``trusted`` condition does — a call naming it is a hallucination and logs as
+#: ``unexposed`` (``server._exposure``). Leaning on the accident would turn the control's
+#: own miss into a CHANNEL OPEN.
+META_KEY = (GATEWAY_SERVER_ID, FIND_TOOLS)
+
+#: Everything the client was actually shown. A call for anything else is the phenomenon.
+CORE_KEYS = frozenset(tuple(key) for key in CORE)
+ADVERTISED_KEYS = CORE_KEYS | {META_KEY}
+
+#: The server ids a gateway tool call can legitimately carry. ``CORE`` spans every server
+#: in the probe catalog (github, notion, playwright), so this is the whole set — and
+#: requiring membership is what stops a client built-in that happens to contain ``__``
+#: from parsing as an unadvertised MCP tool and manufacturing a false CHANNEL OPEN.
+KNOWN_SERVERS = frozenset({key[0] for key in CORE_KEYS} | {GATEWAY_SERVER_ID})
+
+#: The two exposure states that *are* the hypothesis. A ``kind: call`` record logged as
+#: either one is, by the gateway's own definition (``log.py``), a call for a tool that was
+#: never in the ``tools/list`` array — which is the thing this probe exists to detect.
+#: ``listed`` is the core, and is therefore not it.
+UNADVERTISED_EXPOSURES = (EXPOSURE_DISCLOSED, EXPOSURE_UNEXPOSED)
 
 BASE_SYSTEM = (
     "Answer using the available MCP tools. Do not use Bash, WebFetch, or your own "
@@ -209,17 +247,98 @@ def _received(records: list[dict], key: tuple[str, str]) -> dict | None:
     return None
 
 
+def _parse_emitted(name: str) -> tuple[str, str] | None:
+    """Resolve a name the *client* reported back to a catalog key, or ``None``.
+
+    The SDK namespaces MCP tools with its own prefix — ``mcp__gw__github__get_tag`` for
+    what we advertised as ``github__get_tag`` — and mixes them in ``tool_calls`` with the
+    client's own built-ins (``ToolSearch``, ``Bash``, ``Read``). Those built-ins are not
+    gateway tools at all, and counting one as an unadvertised MCP call would manufacture
+    a CHANNEL OPEN out of a ``Bash`` invocation: the worst failure available here, because
+    CHANNEL OPEN is the verdict that says arm B needs no further work.
+
+    So peel prefix segments with ``parse_advertised`` — the same helper that produced the
+    name — and accept only when the head is a server the gateway actually fronts. A name
+    with no ``__`` at all fails on the first parse; one with ``__`` but no known server id
+    is peeled to nothing and rejected. Both return ``None``, which reads as "not ours",
+    never as "unadvertised".
+    """
+    remainder = name
+    while True:
+        try:
+            server_id, tool_name = parse_advertised(remainder)
+        except AdvertisedNameError:
+            return None
+        if server_id in KNOWN_SERVERS:
+            return server_id, tool_name
+        remainder = tool_name
+
+
+def _unadvertised_emitted(result) -> list[str]:
+    """L1 — every call the model emitted for a tool it was never advertised.
+
+    The hypothesis is about the *class* of tool, not about ``TARGET``. A pre-flight over
+    the real catalog had the stub retriever answer a plausible release query with
+    ``get_latest_release`` / ``get_release_by_tag`` / ``get_tag``; calling any of those
+    proves the same point as calling ``list_releases``, and a TARGET-only reading would
+    have scored it as a non-emission.
+
+    The meta-tool is excluded explicitly: it *is* advertised in the ``findtools``
+    condition, and in ``trusted`` a call naming it is a hallucination about the gateway
+    rather than about a withheld catalog tool.
+    """
+    found = {
+        _uid(key)
+        for key in (_parse_emitted(name) for name in result.tool_calls)
+        if key is not None and key not in ADVERTISED_KEYS
+    }
+    return sorted(found)
+
+
+def _unadvertised_received(records: list[dict]) -> list[dict]:
+    """L2/L3 — every call the gateway received for a tool it never advertised.
+
+    This is the authoritative signal, and the gateway already computes it: ``exposure``
+    is assigned by comparing the called key against the set actually put in the
+    ``tools/list`` array, so ``disclosed`` or ``unexposed`` on a ``kind: call`` record
+    *is* the phenomenon, stated by the only party that can see both sides.
+
+    ``_gateway/find_tools`` is dropped by name rather than left to its ``listed``
+    exposure — see ``META_KEY``.
+    """
+    meta_uid = _uid(META_KEY)
+    return [
+        {"tool_uid": record.get("tool_uid"), "exposure": record.get("exposure")}
+        for record in records
+        if record.get("kind") == "call"
+        and record.get("exposure") in UNADVERTISED_EXPOSURES
+        and record.get("tool_uid") != meta_uid
+    ]
+
+
+def _disclosed_outside_core(disclosed: list[str] | None) -> list[str]:
+    """L0 — which of the tools ``find_tools`` handed over were not already advertised.
+
+    Gate 4 asks whether the model was ever told about a callable tool it had not been
+    shown. Any disclosure outside the core answers that, whether or not it was ``TARGET``
+    — the retriever returning three sensible non-target substitutes is a run that *did*
+    exercise the channel, and throwing it away as UNREADABLE wastes the run.
+    """
+    advertised = {_uid(key) for key in ADVERTISED_KEYS}
+    return sorted({uid for uid in (disclosed or []) if uid not in advertised})
+
+
 def _meta_calls(records: list[dict]) -> dict | None:
     """Every ``find_tools`` call in this run, folded into one summary.
 
     Not the first record. The agent may call ``find_tools`` several times, and the
-    verdict gates on whether the withheld target was *ever* disclosed — so reading only
-    the first call would let a second, better query that did surface the target go
-    unseen, and the run would be thrown away as UNREADABLE despite having exercised the
-    channel. Queries are kept in order for the same reason: the one that mattered is
-    not necessarily the first.
+    verdict gates on whether a withheld tool was *ever* disclosed — so reading only the
+    first call would let a second, better query that did surface one go unseen, and the
+    run would be thrown away as UNREADABLE despite having exercised the channel. Queries
+    are kept in order for the same reason: the one that mattered is not necessarily the
+    first.
     """
-    uid = _uid((GATEWAY_SERVER_ID, FIND_TOOLS))
+    uid = _uid(META_KEY)
     metas = [r for r in records if r.get("kind") == "call" and r.get("tool_uid") == uid]
     if not metas:
         return None
@@ -251,21 +370,33 @@ async def probe(
         )
         records = _log_records(base_config, condition)
         decisions = [r for r in records if r.get("kind") == "decision"]
-        received = _received(records, TARGET)
+        target_received = _received(records, TARGET)
+        arrived = _unadvertised_received(records)
         meta = _meta_calls(records)
         disclosed = (meta or {}).get("disclosed") or []
 
         row = {
-            "emitted": _emitted(result, TARGET),
-            "received": received is not None,
-            "exposure": (received or {}).get("exposure"),
+            # The verdict keys on these two: any tool outside the advertised set.
+            "emitted": bool(_unadvertised_emitted(result)),
+            "received": bool(arrived),
+            "exposure": arrived[0]["exposure"] if arrived else None,
+            "unadvertised_emitted": _unadvertised_emitted(result),
+            "unadvertised_received": arrived,
+            # Reported, not gated on: whether the specific withheld tool was the one
+            # used is worth knowing, but it is a detail of *which* tool the retriever
+            # happened to rank, not of whether the channel is open.
+            "target_emitted": _emitted(result, TARGET),
+            "target_received": target_received is not None,
+            "target_exposure": (target_received or {}).get("exposure"),
             "find_tools_called": meta is not None,
             "find_tools_calls": (meta or {}).get("n", 0),
             "find_tools_queries": (meta or {}).get("queries"),
             "find_tools_disclosed": (meta or {}).get("disclosed"),
             # The hypothesis is about a tool the model *learned of* from a tool result.
-            # If the stub retriever never returned the target, the model was never told
-            # it exists and the channel was never exercised — see `_verdict`.
+            # If the stub retriever returned nothing outside the core, the model was
+            # never told any withheld tool exists and the channel was never exercised
+            # — see `_verdict`.
+            "disclosed_outside_core": _disclosed_outside_core(disclosed),
             "target_disclosed": _uid(TARGET) in disclosed,
             # Live mode has never served a real client. A wrong count here means the
             # finding is about our config, not about the client.
@@ -279,9 +410,10 @@ async def probe(
         print(
             f"  {condition.name:<10} {condition.reads:<50} | "
             f"advertised={row['n_advertised']} find_tools={row['find_tools_calls']} "
-            f"target_disclosed={row['target_disclosed']!s:<5} "
+            f"disclosed_outside_core={len(row['disclosed_outside_core'])} "
             f"emitted={row['emitted']!s:<5} received={row['received']!s:<5} "
-            f"exposure={row['exposure']}",
+            f"exposure={row['exposure']} "
+            f"tools={row['unadvertised_received'] or row['unadvertised_emitted']}",
             flush=True,
         )
 
@@ -325,11 +457,16 @@ def _verdict(results: dict) -> str:
     # disclosure gate below therefore sits *after* them, guarding only the branch that
     # reads a non-emission as a fact about the model.
     if findtools["emitted"] and findtools["received"]:
+        arrived = ", ".join(
+            f"{r['tool_uid']} ({r['exposure']})" for r in findtools["unadvertised_received"]
+        )
         return (
             f"CHANNEL OPEN — the model called a tool it never saw advertised and the "
-            f"call reached the gateway, logged as {findtools['exposure']!r}. Arm B is "
-            f"real: find_tools + ranker + bandit, with no collection and no cache cost. "
-            f"was_exposed:false is alive at last, as `disclosed`."
+            f"call reached the gateway: {arrived}. Arm B is real: find_tools + ranker + "
+            f"bandit, with no collection and no cache cost. was_exposed:false is alive at "
+            f"last. (The withheld target itself was "
+            f"{'used' if findtools['target_received'] else 'not the tool used'}; which "
+            f"tool the retriever ranked is a detail, the channel is the finding.)"
         )
     if findtools["emitted"] and not findtools["received"]:
         return (
@@ -340,21 +477,28 @@ def _verdict(results: dict) -> str:
         )
 
     # The model did not try. Before that can be read as a refusal, it has to be true
-    # that the model was ever told the tool exists. The retriever is a deliberate stub
-    # (LexicalScorer, top-k=5) over ~95 tools, and a call with a bad or absent `query`
-    # discloses nothing at all — so find_tools being *called* is not the same as the
-    # target being *offered*. Without this gate the fall-through below reports
-    # STRUCTURAL, the strongest negative in the pre-registered reading, off a run that
-    # never exercised the channel it exists to test.
-    if not findtools["target_disclosed"]:
+    # that the model was ever told about at least one callable tool it had not been
+    # advertised. The retriever is a deliberate stub (LexicalScorer, top-k=5) over ~95
+    # tools, and a call with a bad or absent `query` discloses nothing at all — so
+    # find_tools being *called* is not the same as anything being *offered*. Without this
+    # gate the fall-through below reports STRUCTURAL, the strongest negative in the
+    # pre-registered reading, off a run that never exercised the channel it exists to
+    # test.
+    #
+    # The condition is "anything outside the core", not "TARGET": a pre-flight showed the
+    # retriever answering a plausible release query with three non-target GitHub tools,
+    # all equally withheld. That run does exercise the hypothesis, and gating on TARGET
+    # would have discarded it.
+    if not findtools["disclosed_outside_core"]:
         return (
             f"UNREADABLE — find_tools was called "
-            f"{findtools['find_tools_calls']}x but never returned {_uid(TARGET)}, so "
-            f"the model was never told the withheld tool exists and the probe did not "
-            f"test its own hypothesis. Queries: {findtools['find_tools_queries']!r}; "
-            f"disclosed: {findtools['find_tools_disclosed']!r}. Fix the retrieval side "
-            f"— the query the agent is steered to write, or k — not the client, and do "
-            f"not report this as a null."
+            f"{findtools['find_tools_calls']}x but returned nothing outside the "
+            f"advertised core, so the model was never told any withheld tool exists and "
+            f"the probe did not test its own hypothesis. Queries: "
+            f"{findtools['find_tools_queries']!r}; disclosed: "
+            f"{findtools['find_tools_disclosed']!r}. Fix the retrieval side — the query "
+            f"the agent is steered to write, or k — not the client, and do not report "
+            f"this as a null."
         )
 
     # The control says whether the model could have called it. But the control itself
