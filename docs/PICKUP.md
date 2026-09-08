@@ -169,18 +169,28 @@ structural, and each structural lever costs something.
 
 ### Unblocked, cheap, decisive
 
-1. **⭐ Probe arm B's core assumption** (~$0.07). Advertise a small core + `find_tools`; give
-   a task needing a withheld tool; return its real schema; **watch whether a `tools/call`
-   arrives at the gateway.** Our side is ready — `Gateway.call_tool` routes by parsed name
-   without consulting `_exposed`, precisely so this is servable and loggable. Wiring needs
-   two edits: advertise the meta-tool in `list_tools`, and branch on `server_id ==
-   "_gateway"` in `call_tool` before reaching the pool.
-   - **call arrives** → arm B is real; `find_tools` + ranker + bandit is viable with **no
-     collection and no cache cost**, and `was_exposed: false` comes alive
-   - **no call** → registration is required, so arm B becomes `find_tools` + `list_changed`,
-     gated on step 2
-   - **agent uses built-in ToolSearch instead** → routing must be solved first
-2. **Measure `list_changed`'s cache cost** — only if step 1 fails. Needs a minimal
+1. **~~⭐ Probe arm B's core assumption~~ — ✅ DONE 2026-08-31. The answer is *no*.**
+   Built (`find_tools` in `gateway/`, three-state `exposure` field, 317 tests) and run for
+   ~$0.14. `results/probe_armb.json`; full reasoning in `decisions.md` (2026-08-31).
+
+   **The model emitted the call, in two name formats, in both conditions. The gateway
+   received nothing.** The trusted-channel control — the tool named in the *system prompt*,
+   an operator instruction rather than tool output — gave the identical result, so this is
+   not the untrusted-content refusal from 2026-08-18 and is not promptable-around.
+   `find_tools` itself worked perfectly: one call, five tools disclosed, target among them.
+
+   **Mechanism, in the agent's words:** *"the `github__list_releases` tool doesn't actually
+   exist in this environment, despite being described as available"*, and `ToolSearch` for
+   it returned *"No matching deferred tools found"*. **The client's registry is built from
+   the `tools/list` array and is authoritative** — tool search cannot see past it and
+   neither can dispatch.
+
+   **Therefore: capture rate on this client is zero, `exposure: unexposed` is unreachable,
+   and the branch below is the live one.** Note this is a *stronger* claim than §2f's: the
+   model does generate the call, so the block is at dispatch, not at generation.
+
+2. **⭐ Measure `list_changed`'s cache cost — now the critical path, not a contingency.**
+   Step 1 failed, so arm B becomes `find_tools` + `list_changed`. Needs a minimal
    implementation: `mcp.types.ToolListChangedNotification` exists but `MCPServer` exposes no
    send method, so it needs plumbing to the session. `ArmResult` already captures
    `cache_creation_tokens` / `cache_read_tokens`, so the measurement itself is free.

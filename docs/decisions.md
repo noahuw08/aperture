@@ -9,6 +9,73 @@ in [`plan.md`](plan.md).
 
 ---
 
+## 2026-08-31 — The client filters unadvertised calls; arm B needs registration, and capture rate is zero
+
+**Decision:** arm B as specified — a pinned core plus `find_tools`, with the agent calling
+tools it learned about from the meta-tool's result — **does not work on Claude Code**. It
+requires registration via `list_changed`. The next gate is measuring that cache-invalidation
+cost, which is now on the critical path rather than a contingency.
+
+**The measurement.** `bench/probe_armb.py`, two live sessions, ~$0.14.
+`results/probe_armb.json`.
+
+| condition | advertised | `find_tools` | disclosed target | model emitted | gateway received |
+|---|---|---|---|---|---|
+| `findtools` | 4 (core + meta) | 1 call | ✅ | ✅ | ❌ |
+| `trusted` (control) | 3 (core only) | — | named in system prompt | ✅ | ❌ |
+
+**The finding is about the client, not the model.** This is the distinction the probe was
+built to draw, and both channels agree:
+
+- The model was **willing**. It emitted the call in *both* conditions, and in *two* name
+  formats — bare `github__list_releases` and namespaced `mcp__gw__github__list_releases`.
+- The gateway received **nothing**. `Gateway.call_tool` was never entered.
+- The **trusted control converges**. The system prompt is an operator instruction, not tool
+  output, so the untrusted-content refusal measured on 2026-08-18 does not apply — and the
+  result is identical. This is not promptable-around.
+
+`find_tools` itself worked exactly as designed: one call, query *"list releases and tags for
+a GitHub repository"*, five tools disclosed including the target. The channel we built is
+fine; the client will not dispatch through it.
+
+**The mechanism, stated by the agent.** *"The `github__list_releases` tool doesn't actually
+exist in this environment, despite being described as available"*, and `ToolSearch` for
+`select:github__list_releases` returned *"No matching deferred tools found"*. **The client's
+tool registry is built from the `tools/list` array and is authoritative.** Tool search cannot
+see past it, and neither can dispatch. Availability is resolved client-side, before a call is
+ever attempted.
+
+**Consequences.**
+
+1. **Capture rate on this client is zero.** [`intuitions.md`](intuitions.md) carried this as
+   an unverified assumption since the beginning; it is now measured, and false. The
+   missing-demand signal has no channel on Claude Code — not because the signal is rare, but
+   because the client cannot emit it.
+2. **`was_exposed: false` / `exposure: unexposed` is unreachable here**, confirming the
+   structural claim in PICKUP §2f for a stronger reason than the one given there. It is not
+   that availability is resolved before generation — the model *did* generate. It is that
+   dispatch is gated separately.
+3. **Arm B is not dead, but it is a different arm.** `find_tools` + `list_changed`, where the
+   gateway re-advertises after a disclosure. That costs a prompt-cache invalidation, still
+   unmeasured, and `MCPServer` exposes no send method for
+   `ToolListChangedNotification` — it needs plumbing to the session.
+4. **The three-state `exposure` field still earns its place.** `disclosed` is reachable the
+   moment registration works, and it is what keeps a working `find_tools` from flooding the
+   miss channel with its own successes.
+
+**What was rejected.** Reading the null as "the model declines untrusted tool output" — the
+2026-08-18 result made that the leading hypothesis, and the trusted-channel control was added
+specifically to separate it. It is ruled out: the model tried, twice, in both conditions.
+
+**Note on the instrument.** Two defects found in review would each have produced a wrong
+answer: `n_advertised` was logged before the meta-tool was appended, which would have made
+every run read `UNREADABLE`; and the verdict keyed on one hardcoded tool when the hypothesis
+is about the whole unadvertised class, which a live pre-flight showed would misread a
+`get_latest_release` substitution as a non-emission. Both are recorded in
+[`superpowers/plans/2026-08-19-arm-b-probe.md`](superpowers/plans/2026-08-19-arm-b-probe.md).
+
+---
+
 ## 2026-08-11 — Ranked replay baselines fill the budget; the null control was winning on a technicality
 
 **Decision:** `_Ranked` in `replay/baselines.py` appends the catalog tools absent from its

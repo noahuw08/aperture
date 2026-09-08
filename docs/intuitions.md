@@ -408,9 +408,17 @@ four at once.
 
 **Why it bites.** It's the only direct evidence of demand for something you aren't serving —
 you can't learn it from usage data, because a tool that isn't exposed generates no usage.
-It's also entirely dependent on an unverified assumption: that the client actually forwards
-such an attempt instead of silently filtering it. That's what *capture rate* measures, and
-it's the first thing the dogfood deployment is for.
+It's also entirely dependent on an assumption about the client: that it actually forwards
+such an attempt instead of silently filtering it. That's what *capture rate* measures.
+
+> ⚠️ **Measured 2026-08-31, and the assumption is false on Claude Code.** `probe_armb`
+> advertised a 3-tool core, had `find_tools` disclose `github/list_releases`, and watched
+> what happened. The model **did** emit the call — in two name formats — and **nothing
+> reached the gateway**. The control, which named the tool in the *system prompt* as an
+> operator instruction, produced the identical result. The agent's own words: *"the
+> `github__list_releases` tool doesn't actually exist in this environment, despite being
+> described as available."* Capture rate on this client is **zero**, and it is the client
+> filtering, not the model declining. See `results/probe_armb.json`.
 
 **Why we care at all — it is the only uncensored error signal.** The gateway's job is to not
 send some tools, but every observation coming back is about the tools it *did* send. Cut

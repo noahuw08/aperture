@@ -1,0 +1,70 @@
+{
+  "findtools": {
+    "emitted": true,
+    "received": false,
+    "exposure": null,
+    "unadvertised_emitted": [
+      "github/list_releases"
+    ],
+    "unadvertised_received": [],
+    "target_emitted": true,
+    "target_received": false,
+    "target_exposure": null,
+    "find_tools_called": true,
+    "find_tools_calls": 1,
+    "find_tools_queries": [
+      "list releases and tags for a GitHub repository"
+    ],
+    "find_tools_disclosed": [
+      "github/list_branches",
+      "github/list_issue_fields",
+      "github/list_issues",
+      "github/list_releases",
+      "github/list_tags"
+    ],
+    "disclosed_outside_core": [
+      "github/list_branches",
+      "github/list_issue_fields",
+      "github/list_issues",
+      "github/list_releases",
+      "github/list_tags"
+    ],
+    "target_disclosed": true,
+    "n_advertised": 4,
+    "turns": 8,
+    "tool_calls": {
+      "mcp__gw___gateway__find_tools": 1,
+      "github__list_releases": 1,
+      "mcp__gw__github__list_releases": 1
+    },
+    "answer": "I can't answer this one \u2014 no working MCP tool is reachable for it.\n\nWhat I tried:\n\n1. **`ToolSearch`** for GitHub release/tag tools \u2014 the only GitHub tool actually registered in this session is `mcp__gw__github__get_me` (authenticated user profile), which can't list releases.\n2. **`mcp__gw___gateway__find_tools`** \u2014 the gateway catalog *advertised* `github__list_releases` and `github__list_tags` with full schemas, describing them as \"callable by the exact name shown.\"\n3. **Calling `github__list_releases`** \u2014 failed: `No such tool available`.\n4. **Loading it via `ToolSearch` (`select:github__list_releases`, plus the `mcp__gw__`-prefixed variant)** \u2014 `No matching deferred tools found`.\n5. **Calling `mcp__gw__github__list_releases`** \u2014 also failed: `No such tool available`.\n\nSo the gateway's catalog and its actually-exposed toolset are out of sync: `find_tools` lists release/tag tools that the gateway won't route. That's a gateway configuration issue on your side, not something I can work around from here.\n\nI deliberately did **not** fall back to `WebFetch`/`WebSearch` against github.com, or to `gh`/`curl` via Bash \u2014 you asked me to answer using MCP tools only, and I shouldn't answer from my own knowledge either (my training data wouldn't reflect the current state of that repo's releases anyway).\n\nTo unblock this, the GitHub MCP server behind the `gw` gateway likely needs its release/tag tools actually enabled or its toolset filter widened \u2014 right now it seems to expose only `get_me`. Once `github__list_releases` is genuinely routable, this is a single call: `owner: modelcontextprotocol`, `repo: servers`, `perPage: 3`, `fields: [\"tag_name\", \"published_at\"]`.",
+    "error": null
+  },
+  "trusted": {
+    "emitted": true,
+    "received": false,
+    "exposure": null,
+    "unadvertised_emitted": [
+      "github/list_releases"
+    ],
+    "unadvertised_received": [],
+    "target_emitted": true,
+    "target_received": false,
+    "target_exposure": null,
+    "find_tools_called": false,
+    "find_tools_calls": 0,
+    "find_tools_queries": null,
+    "find_tools_disclosed": null,
+    "disclosed_outside_core": [],
+    "target_disclosed": false,
+    "n_advertised": 3,
+    "turns": 6,
+    "tool_calls": {
+      "github__list_releases": 1,
+      "mcp__gw__github__list_releases": 1
+    },
+    "answer": "I can't answer this one. The `github__list_releases` tool doesn't actually exist in this environment, despite being described as available:\n\n- **`ToolSearch` for `select:github__list_releases`** \u2192 \"No matching deferred tools found\"\n- **Keyword search** (\"github releases list repository\") \u2192 returned only unrelated tools (CronList, RemoteTrigger, SendMessage, WebFetch, etc.), no releases tool\n- **Direct call to `github__list_releases`** \u2192 \"No such tool available\"\n- **Direct call to `mcp__gw__github__list_releases`** (the gateway-prefixed variant) \u2192 \"No such tool available\"\n\nThe only GitHub tool actually exposed through the `gw` MCP server is `mcp__gw__github__get_me`, which returns the authenticated user's profile and cannot list repository releases.\n\nSince you asked me not to fall back on Bash, WebFetch, or my own knowledge, I have no way to retrieve the release tags for `modelcontextprotocol/servers`. If you can enable the GitHub MCP server's releases tool (or confirm a different tool name), I'll pull the three most recent tags right away. Alternatively, if you'd like to lift the restriction, I could fetch them via `gh` or the web.",
+    "error": null
+  },
+  "verdict": "CLIENT FILTERS \u2014 the model emitted the call and it never reached us, so the client resolves availability before dispatch. Registration is required: arm B becomes find_tools + list_changed, gated on measuring the cache-invalidation cost."
+}
